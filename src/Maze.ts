@@ -1,0 +1,832 @@
+import * as THREE from 'three';
+import { Cell, MazeFloor, FloorTheme, FloorType } from './types';
+import { makeBrickTexture, makeFloorTexture, makeWoodTexture, makeStoneTexture } from './TextureFactory';
+
+/** Load an image texture with tiling */
+function loadTex(path: string, repeatX = 1, repeatY = 1): THREE.Texture {
+  const loader = new THREE.TextureLoader();
+  const tex = loader.load(path);
+  tex.wrapS = tex.wrapT = THREE.RepeatWrapping;
+  tex.repeat.set(repeatX, repeatY);
+  tex.minFilter = THREE.LinearMipmapLinearFilter;
+  tex.magFilter = THREE.LinearFilter;
+  return tex;
+}
+
+export const CELL_SIZE      = 4;
+export const WALL_HEIGHT    = 3.5;
+export const OBSTACLE_HEIGHT = 0.85;
+
+// ─── Themes ────────────────────────────────────────────────────────────────
+
+const THEMES: FloorTheme[] = [
+  {
+    name: 'Catacumbas',
+    wallColor:    0x3d2b1f,
+    floorColor:   0x1a1210,
+    ceilColor:    0x0d0908,
+    fogColor:     0x060200,
+    fogDensity:   0.055,
+    ambientColor: 0x100500,
+    lightColor:   0xff5010,
+    hasCeiling:   true,
+    hasWindows:   false,
+    windowColor:  0x000000,
+    wallHeight:   WALL_HEIGHT,
+  },
+  {
+    name: 'La Casa',
+    wallColor:    0x8b7250,
+    floorColor:   0x5a3e28,
+    ceilColor:    0x3a2a1a,
+    fogColor:     0x080c12,
+    fogDensity:   0.028,
+    ambientColor: 0x0a101a,
+    lightColor:   0x6688cc,
+    hasCeiling:   true,
+    hasWindows:   true,
+    windowColor:  0x2244aa,
+    wallHeight:   WALL_HEIGHT,
+  },
+  {
+    name: 'El Pueblo',
+    wallColor:    0x5a5040,
+    floorColor:   0x38342a,
+    ceilColor:    0x000000,
+    fogColor:     0x04060a,
+    fogDensity:   0.018,
+    ambientColor: 0x050810,
+    lightColor:   0x4466aa,
+    hasCeiling:   false,
+    hasWindows:   true,
+    windowColor:  0x1a2244,
+    wallHeight:   WALL_HEIGHT,
+  },
+];
+
+const FLOOR_TYPES: FloorType[] = ['catacombs', 'house', 'village'];
+
+// ─── Generator ─────────────────────────────────────────────────────────────
+
+export class MazeGenerator {
+  floors: MazeFloor[] = [];
+
+  generate() {
+    this.floors = [];
+    this.floors.push(this.generateCatacombs(0));
+    this.floors.push(this.generateHouse(1));
+    this.floors.push(this.generateVillage(2));
+
+    // Stairs between floors
+    this.placeStairs(0, 1);
+    this.placeStairs(1, 2);
+
+    // Exit on last floor
+    this.placeExit(2);
+
+    // Obstacles on all floors
+    this.addObstacles(0);
+    this.addObstacles(1);
+    this.addObstacles(2);
+  }
+
+  // ── Catacumbs: recursive backtracker ─────────────────────────────────────
+
+  private generateCatacombs(fi: number): MazeFloor {
+    const W = 21, H = 21;
+    const cells = this.solidCells(W, H, fi);
+    const stack: [number, number][] = [];
+    cells[1][1].visited = true;
+    stack.push([1, 1]);
+
+    while (stack.length) {
+      const [cx, cz] = stack[stack.length - 1];
+      const nbrs = this.unvisitedNeighbours(cells, cx, cz, W, H);
+      if (!nbrs.length) { stack.pop(); continue; }
+      const [nx, nz, dir] = nbrs[Math.floor(Math.random() * nbrs.length)];
+      this.removeWall(cells, cx, cz, nx, nz, dir);
+      cells[nz][nx].visited = true;
+      stack.push([nx, nz]);
+    }
+
+    // Extra loops for variety
+    for (let i = 0; i < 15; i++) {
+      const x = 1 + 2 * Math.floor(Math.random() * ((W - 1) / 2));
+      const z = 1 + 2 * Math.floor(Math.random() * ((H - 1) / 2));
+      const dirs = ['N','S','E','W'] as const;
+      const dir = dirs[Math.floor(Math.random() * 4)];
+      const [dx, dz] = dir === 'N' ? [0,-1] : dir === 'S' ? [0,1] : dir === 'E' ? [1,0] : [-1,0];
+      const mx = x + dx, mz = z + dz, ex = x + 2*dx, ez = z + 2*dz;
+      if (ex >= 0 && ex < W && ez >= 0 && ez < H) {
+        this.removeWall(cells, x, z, ex, ez, dir);
+      }
+    }
+
+    return { cells, width: W, height: H, theme: THEMES[0], type: 'catacombs', entryCell: { x: 1, z: 1 } };
+  }
+
+  // ── House: BSP-style room placement ──────────────────────────────────────
+
+  private generateHouse(fi: number): MazeFloor {
+    const W = 50, H = 50;   // x2 bigger
+    const cells = this.solidCells(W, H, fi);
+
+    type Room = { x: number; z: number; w: number; h: number };
+    const rooms: Room[] = [];
+
+    // Force an entry room near (1,1)
+    rooms.push({ x: 1, z: 1, w: 4, h: 4 });
+    this.carveRoom(cells, 1, 1, 4, 4);
+
+    // Place random rooms — many more for the larger map
+    for (let attempts = 0; attempts < 200 && rooms.length < 30; attempts++) {
+      const rw = 2 + Math.floor(Math.random() * 5); // 2-6
+      const rh = 2 + Math.floor(Math.random() * 5);
+      const rx = 1 + Math.floor(Math.random() * (W - rw - 2));
+      const rz = 1 + Math.floor(Math.random() * (H - rh - 2));
+
+      const overlap = rooms.some(r =>
+        rx < r.x + r.w + 2 && rx + rw + 2 > r.x &&
+        rz < r.z + r.h + 2 && rz + rh + 2 > r.z
+      );
+      if (!overlap) {
+        rooms.push({ x: rx, z: rz, w: rw, h: rh });
+        this.carveRoom(cells, rx, rz, rx + rw - 1, rz + rh - 1);
+      }
+    }
+
+    // Connect rooms with greedy MST corridors
+    const connected = new Set<number>([0]);
+    while (connected.size < rooms.length) {
+      let best = { dist: Infinity, from: -1, to: -1 };
+      for (const ci of connected) {
+        for (let j = 0; j < rooms.length; j++) {
+          if (connected.has(j)) continue;
+          const ra = rooms[ci], rb = rooms[j];
+          const cax = ra.x + Math.floor(ra.w / 2), caz = ra.z + Math.floor(ra.h / 2);
+          const cbx = rb.x + Math.floor(rb.w / 2), cbz = rb.z + Math.floor(rb.h / 2);
+          const d = Math.abs(cax - cbx) + Math.abs(caz - cbz);
+          if (d < best.dist) best = { dist: d, from: ci, to: j };
+        }
+      }
+      if (best.from < 0) break;
+      const ra = rooms[best.from], rb = rooms[best.to];
+      const ax = ra.x + Math.floor(ra.w / 2), az = ra.z + Math.floor(ra.h / 2);
+      const bx = rb.x + Math.floor(rb.w / 2), bz = rb.z + Math.floor(rb.h / 2);
+      this.carveHallway(cells, ax, az, bx, bz, W, H);
+      connected.add(best.to);
+    }
+
+    // A few extra connections for reachability
+    for (let i = 0; i < 10; i++) {
+      const ra = rooms[Math.floor(Math.random() * rooms.length)];
+      const rb = rooms[Math.floor(Math.random() * rooms.length)];
+      if (ra !== rb) {
+        this.carveHallway(cells,
+          ra.x + Math.floor(ra.w / 2), ra.z + Math.floor(ra.h / 2),
+          rb.x + Math.floor(rb.w / 2), rb.z + Math.floor(rb.h / 2),
+          W, H);
+      }
+    }
+
+    return { cells, width: W, height: H, theme: THEMES[1], type: 'house', entryCell: { x: 1, z: 1 } };
+  }
+
+  // ── Village: grid streets + building blocks ───────────────────────────────
+
+  private generateVillage(fi: number): MazeFloor {
+    const W = 155, H = 155;   // x5 bigger
+    const cells = this.openCells(W, H, fi);
+
+    const STREET = 2; // street width in cells
+    const BLOCK  = 6; // building block size
+
+    const step = BLOCK + STREET;
+
+    for (let bz = 0; bz * step + BLOCK < H - 1; bz++) {
+      for (let bx = 0; bx * step + BLOCK < W - 1; bx++) {
+        const sx = bx * step + STREET;
+        const sz = bz * step + STREET;
+        const ex = sx + BLOCK - 1;
+        const ez = sz + BLOCK - 1;
+
+        // 25% chance: building has an interior alley/courtyard
+        const hollow = Math.random() < 0.25;
+        // 10% chance: no building (empty lot / plaza) — fewer gaps = harder
+        if (Math.random() < 0.10) continue;
+
+        for (let z = sz; z <= ez; z++) {
+          for (let x = sx; x <= ex; x++) {
+            if (hollow && x > sx && x < ex && z > sz && z < ez) continue;
+            this.solidifyCell(cells, x, z, W, H);
+          }
+        }
+      }
+    }
+
+    // ── Dead ends: seal off many street segments to create traps ──────────
+    // Horizontal dead ends: block a street segment with a wall across it
+    for (let i = 0; i < 120; i++) {
+      const bx = Math.floor(Math.random() * (W - 4)) + 2;
+      const bz = Math.floor(Math.random() * (H - 4)) + 2;
+      // Pick a random direction for the dead-end wall (2-3 cells wide)
+      const horizontal = Math.random() < 0.5;
+      const len = 2 + Math.floor(Math.random() * 2); // 2-3 cells
+
+      if (horizontal) {
+        // Block a vertical street with a horizontal wall
+        let canPlace = true;
+        for (let dx = 0; dx < len; dx++) {
+          const c = cells[bz]?.[bx + dx];
+          if (!c || isSolid(c) || c.stairs || c.isExit) { canPlace = false; break; }
+        }
+        if (canPlace) {
+          for (let dx = 0; dx < len; dx++) {
+            this.solidifyCell(cells, bx + dx, bz, W, H);
+          }
+        }
+      } else {
+        // Block a horizontal street with a vertical wall
+        let canPlace = true;
+        for (let dz = 0; dz < len; dz++) {
+          const c = cells[bz + dz]?.[bx];
+          if (!c || isSolid(c) || c.stairs || c.isExit) { canPlace = false; break; }
+        }
+        if (canPlace) {
+          for (let dz = 0; dz < len; dz++) {
+            this.solidifyCell(cells, bx, bz + dz, W, H);
+          }
+        }
+      }
+    }
+
+    // ── Winding alleys: narrow 1-cell passages that twist and dead-end ────
+    for (let a = 0; a < 40; a++) {
+      let ax = 2 + Math.floor(Math.random() * (W - 4));
+      let az = 2 + Math.floor(Math.random() * (H - 4));
+      if (isSolid(cells[az]?.[ax])) continue;
+      const alleyLen = 6 + Math.floor(Math.random() * 10);
+      let dx = Math.random() < 0.5 ? 1 : 0;
+      let dz = dx === 0 ? 1 : 0;
+      if (Math.random() < 0.5) { dx = -dx; dz = -dz; }
+
+      for (let s = 0; s < alleyLen; s++) {
+        const nx = ax + dx, nz = az + dz;
+        if (nx < 2 || nx >= W - 2 || nz < 2 || nz >= H - 2) break;
+        const c = cells[nz]?.[nx];
+        if (!c || c.stairs || c.isExit) break;
+
+        // Solidify cells on both sides to create a narrow passage
+        const perpDx = dz, perpDz = -dx; // perpendicular
+        if (cells[nz + perpDz]?.[nx + perpDx] && !cells[nz + perpDz][nx + perpDx].stairs) {
+          this.solidifyCell(cells, nx + perpDx, nz + perpDz, W, H);
+        }
+        if (cells[nz - perpDz]?.[nx - perpDx] && !cells[nz - perpDz][nx - perpDx].stairs) {
+          this.solidifyCell(cells, nx - perpDx, nz - perpDz, W, H);
+        }
+
+        ax = nx; az = nz;
+
+        // 30% chance to turn
+        if (Math.random() < 0.3) {
+          const temp = dx;
+          dx = Math.random() < 0.5 ? dz : -dz;
+          dz = Math.random() < 0.5 ? temp : -temp;
+          if (dx === 0 && dz === 0) { dx = 1; dz = 0; }
+        }
+      }
+      // Seal the end to make it a dead end (50% of alleys)
+      if (Math.random() < 0.5) {
+        const endX = ax + dx, endZ = az + dz;
+        if (endX >= 2 && endX < W - 2 && endZ >= 2 && endZ < H - 2) {
+          const c = cells[endZ]?.[endX];
+          if (c && !c.stairs && !c.isExit) {
+            this.solidifyCell(cells, endX, endZ, W, H);
+          }
+        }
+      }
+    }
+
+    // Guarantee a central plaza (clear the central block)
+    const px = Math.floor(W / 2) - 3;
+    const pz = Math.floor(H / 2) - 3;
+    for (let z = pz; z <= pz + 6; z++) {
+      for (let x = px; x <= px + 6; x++) {
+        this.openCell(cells, x, z, W, H);
+      }
+    }
+
+    // Guarantee entry area is open
+    for (let z = 0; z <= 3; z++) {
+      for (let x = 0; x <= 3; x++) {
+        this.openCell(cells, x, z, W, H);
+      }
+    }
+
+    return { cells, width: W, height: H, theme: THEMES[2], type: 'village', entryCell: { x: 1, z: 1 } };
+  }
+
+  // ── Stairs & exit ─────────────────────────────────────────────────────────
+
+  private placeStairs(floorA: number, floorB: number) {
+    const fa = this.floors[floorA];
+    const fb = this.floors[floorB];
+    const maxX = Math.min(fa.width, fb.width) - 2;
+    const maxZ = Math.min(fa.height, fb.height) - 2;
+
+    // Flood-fill from entry to find only REACHABLE open cells on floor A
+    const reachable = this.floodFill(floorA, fa.entryCell.x, fa.entryCell.z);
+    const reachableSet = new Set(reachable.map(c => `${c.x},${c.z}`));
+
+    const candidates = this.getOpenCells(floorA).filter(c =>
+      !c.stairs && !c.isExit &&
+      c.x >= 3 && c.x <= maxX && c.z >= 3 && c.z <= maxZ &&
+      reachableSet.has(`${c.x},${c.z}`)
+    );
+
+    // Prefer cells far from entry for more exploration
+    candidates.sort((a, b) => {
+      const dA = Math.abs(a.x - fa.entryCell.x) + Math.abs(a.z - fa.entryCell.z);
+      const dB = Math.abs(b.x - fa.entryCell.x) + Math.abs(b.z - fa.entryCell.z);
+      return dB - dA;
+    });
+
+    // Pick from the farthest third
+    const pool = candidates.slice(0, Math.max(1, Math.floor(candidates.length / 3)));
+    if (!pool.length) return;
+
+    const pick = pool[Math.floor(Math.random() * pool.length)];
+    pick.stairs = 'up';
+
+    // Force a passable path to the stair on floor B (open the cell if it's solid)
+    const bCell = fb.cells[pick.z]?.[pick.x];
+    if (bCell) {
+      bCell.stairs = 'down';
+      // Ensure the cell is accessible on floor B
+      if (bCell.walls.N && bCell.walls.S && bCell.walls.E && bCell.walls.W) {
+        this.openCell(fb.cells, pick.x, pick.z, fb.width, fb.height);
+      }
+      // Always carve a corridor to entry on floor B for guaranteed reachability
+      this.carveHallway(fb.cells, pick.x, pick.z, fb.entryCell.x, fb.entryCell.z, fb.width, fb.height);
+    }
+  }
+
+  /** Flood-fill from a start cell — returns all reachable open cells */
+  private floodFill(fi: number, sx: number, sz: number): Cell[] {
+    const floor = this.floors[fi];
+    if (!floor) return [];
+    const W = floor.width, H = floor.height;
+    const visited = new Set<string>();
+    const result: Cell[] = [];
+    const queue: { x: number; z: number }[] = [{ x: sx, z: sz }];
+    visited.add(`${sx},${sz}`);
+
+    while (queue.length > 0) {
+      const { x, z } = queue.shift()!;
+      const cell = floor.cells[z]?.[x];
+      if (!cell) continue;
+      if (cell.walls.N && cell.walls.S && cell.walls.E && cell.walls.W) continue;
+      result.push(cell);
+
+      const tryMove = (nx: number, nz: number) => {
+        const key = `${nx},${nz}`;
+        if (nx >= 0 && nx < W && nz >= 0 && nz < H && !visited.has(key)) {
+          visited.add(key);
+          queue.push({ x: nx, z: nz });
+        }
+      };
+
+      if (!cell.walls.N) tryMove(x, z - 1);
+      if (!cell.walls.S) tryMove(x, z + 1);
+      if (!cell.walls.E) tryMove(x + 1, z);
+      if (!cell.walls.W) tryMove(x - 1, z);
+    }
+    return result;
+  }
+
+  private placeExit(floorIdx: number) {
+    const floor = this.floors[floorIdx];
+    const W = floor.width, H = floor.height;
+    for (let z = H - 2; z >= 1; z--) {
+      for (let x = W - 2; x >= 1; x--) {
+        const c = floor.cells[z][x];
+        if (!c.stairs && (!c.walls.N || !c.walls.S || !c.walls.E || !c.walls.W)) {
+          c.isExit = true;
+          return;
+        }
+      }
+    }
+  }
+
+  private addObstacles(floorIdx: number) {
+    const cells = this.floors[floorIdx].cells;
+    const W = this.floors[floorIdx].width;
+    const H = this.floors[floorIdx].height;
+    const candidates: Cell[] = [];
+
+    for (let z = 2; z < H - 2; z++) {
+      for (let x = 2; x < W - 2; x++) {
+        const c = cells[z][x];
+        if (!c.stairs && !c.isExit &&
+            (!c.walls.N || !c.walls.S || !c.walls.E || !c.walls.W) &&
+            !(x <= 3 && z <= 3)) {
+          candidates.push(c);
+        }
+      }
+    }
+
+    const count = Math.floor(candidates.length * 0.18);
+    candidates.sort(() => Math.random() - 0.5);
+    for (let i = 0; i < count; i++) candidates[i].hasObstacle = true;
+  }
+
+  // ── Cell helpers ──────────────────────────────────────────────────────────
+
+  private solidCells(W: number, H: number, fi: number): Cell[][] {
+    const cells: Cell[][] = [];
+    for (let z = 0; z < H; z++) {
+      cells[z] = [];
+      for (let x = 0; x < W; x++) {
+        cells[z][x] = { x, z, floor: fi, walls: { N: true, S: true, E: true, W: true }, visited: false };
+      }
+    }
+    return cells;
+  }
+
+  private openCells(W: number, H: number, fi: number): Cell[][] {
+    const cells: Cell[][] = [];
+    for (let z = 0; z < H; z++) {
+      cells[z] = [];
+      for (let x = 0; x < W; x++) {
+        cells[z][x] = {
+          x, z, floor: fi,
+          walls: {
+            N: z === 0,
+            S: z === H - 1,
+            E: x === W - 1,
+            W: x === 0,
+          },
+          visited: true,
+        };
+      }
+    }
+    return cells;
+  }
+
+  private carveRoom(cells: Cell[][], x1: number, z1: number, x2: number, z2: number) {
+    for (let z = z1; z <= z2; z++) {
+      for (let x = x1; x <= x2; x++) {
+        const c = cells[z][x];
+        if (x > x1) { c.walls.W = false; cells[z][x - 1].walls.E = false; }
+        if (x < x2) { c.walls.E = false; cells[z][x + 1].walls.W = false; }
+        if (z > z1) { c.walls.N = false; cells[z - 1][x].walls.S = false; }
+        if (z < z2) { c.walls.S = false; cells[z + 1][x].walls.N = false; }
+      }
+    }
+  }
+
+  private carveHallway(cells: Cell[][], ax: number, az: number, bx: number, bz: number, W: number, H: number) {
+    // L-shaped corridor: horizontal then vertical
+    const minX = Math.max(0, Math.min(ax, bx));
+    const maxX = Math.min(W - 1, Math.max(ax, bx));
+    for (let x = minX; x <= maxX; x++) {
+      this.openCell(cells, x, az, W, H);
+    }
+    const minZ = Math.max(0, Math.min(az, bz));
+    const maxZ = Math.min(H - 1, Math.max(az, bz));
+    for (let z = minZ; z <= maxZ; z++) {
+      this.openCell(cells, bx, z, W, H);
+    }
+  }
+
+  private openCell(cells: Cell[][], x: number, z: number, W: number, H: number) {
+    if (x < 0 || x >= W || z < 0 || z >= H) return;
+    const c = cells[z][x];
+    if (z > 0)     { c.walls.N = false; cells[z - 1][x].walls.S = false; }
+    if (z < H - 1) { c.walls.S = false; cells[z + 1][x].walls.N = false; }
+    if (x > 0)     { c.walls.W = false; cells[z][x - 1].walls.E = false; }
+    if (x < W - 1) { c.walls.E = false; cells[z][x + 1].walls.W = false; }
+  }
+
+  private solidifyCell(cells: Cell[][], x: number, z: number, W: number, H: number) {
+    if (x < 1 || x >= W - 1 || z < 1 || z >= H - 1) return;
+    const c = cells[z][x];
+    c.walls = { N: true, S: true, E: true, W: true };
+    if (z > 0)     cells[z - 1][x].walls.S = true;
+    if (z < H - 1) cells[z + 1][x].walls.N = true;
+    if (x > 0)     cells[z][x - 1].walls.E = true;
+    if (x < W - 1) cells[z][x + 1].walls.W = true;
+  }
+
+  private unvisitedNeighbours(cells: Cell[][], cx: number, cz: number, W: number, H: number): [number, number, string][] {
+    const result: [number, number, string][] = [];
+    for (const [nx, nz, dir] of [[cx, cz-2,'N'], [cx, cz+2,'S'], [cx+2, cz,'E'], [cx-2, cz,'W']] as [number,number,string][]) {
+      if (nx >= 0 && nx < W && nz >= 0 && nz < H && !cells[nz][nx].visited)
+        result.push([nx, nz, dir]);
+    }
+    return result;
+  }
+
+  private removeWall(cells: Cell[][], ax: number, az: number, bx: number, bz: number, dir: string) {
+    const a = cells[az][ax], b = cells[bz][bx];
+    if (dir === 'N') { a.walls.N = false; b.walls.S = false; }
+    if (dir === 'S') { a.walls.S = false; b.walls.N = false; }
+    if (dir === 'E') { a.walls.E = false; b.walls.W = false; }
+    if (dir === 'W') { a.walls.W = false; b.walls.E = false; }
+    const mx = (ax + bx) / 2, mz = (az + bz) / 2;
+    const mid = cells[mz]?.[mx];
+    if (mid) {
+      mid.walls.N = false; mid.walls.S = false; mid.walls.E = false; mid.walls.W = false;
+      // Sync neighbours so wall data is consistent on both sides
+      if (cells[mz - 1]?.[mx]) cells[mz - 1][mx].walls.S = false;
+      if (cells[mz + 1]?.[mx]) cells[mz + 1][mx].walls.N = false;
+      if (cells[mz]?.[mx - 1]) cells[mz][mx - 1].walls.E = false;
+      if (cells[mz]?.[mx + 1]) cells[mz][mx + 1].walls.W = false;
+    }
+  }
+
+  // ── Public utils ──────────────────────────────────────────────────────────
+
+  getOpenCells(floorIdx: number): Cell[] {
+    const f = this.floors[floorIdx];
+    const open: Cell[] = [];
+    for (let z = 0; z < f.height; z++)
+      for (let x = 0; x < f.width; x++) {
+        const c = f.cells[z][x];
+        if (!c.walls.N || !c.walls.S || !c.walls.E || !c.walls.W) open.push(c);
+      }
+    return open;
+  }
+
+  cellToWorld(x: number, z: number, fi: number): THREE.Vector3 {
+    return new THREE.Vector3(x * CELL_SIZE, fi * (WALL_HEIGHT + 1.0), z * CELL_SIZE);
+  }
+
+  worldToCell(wx: number, wz: number, _fi: number): { x: number; z: number } {
+    return { x: Math.round(wx / CELL_SIZE), z: Math.round(wz / CELL_SIZE) };
+  }
+}
+
+// ─── Renderer ──────────────────────────────────────────────────────────────
+
+function isSolid(c: Cell | undefined) {
+  return !c || (c.walls.N && c.walls.S && c.walls.E && c.walls.W);
+}
+
+export class MazeRenderer {
+  private groups: THREE.Group[] = [];
+  private exitMesh: THREE.Mesh | null = null;
+  private stairMeshes: THREE.Mesh[] = [];
+
+  build(maze: MazeGenerator, scene: THREE.Scene): void {
+    maze.floors.forEach((floor, fi) => {
+      const group = new THREE.Group();
+      const theme  = floor.theme;
+      const W = floor.width, H = floor.height;
+      const yBase = fi * (WALL_HEIGHT + 1.0);
+
+      // ── Materials (real image textures) ─────────────────────────────────
+      let wallMat: THREE.MeshLambertMaterial;
+      let floorMat: THREE.MeshLambertMaterial;
+      let ceilMat: THREE.MeshLambertMaterial;
+
+      // Floor plane tiles across the whole maze — repeat proportional to grid size
+      const floorRepeat = Math.max(W, H) / 2;
+
+      if (floor.type === 'house') {
+        wallMat  = new THREE.MeshLambertMaterial({ map: loadTex('/home-wall.png') });
+        floorMat = new THREE.MeshLambertMaterial({ map: loadTex('/home-floor.png', floorRepeat, floorRepeat) });
+        ceilMat  = new THREE.MeshLambertMaterial({ map: loadTex('/home-ceiling.png', floorRepeat, floorRepeat) });
+      } else if (floor.type === 'village') {
+        wallMat  = new THREE.MeshLambertMaterial({ map: loadTex('/village-wall.png') });
+        floorMat = new THREE.MeshLambertMaterial({ map: loadTex('/vilage-floor.png', floorRepeat, floorRepeat) });
+        ceilMat  = new THREE.MeshLambertMaterial({ color: 0x000000 }); // open sky
+      } else {
+        // Catacombs / basement
+        wallMat  = new THREE.MeshLambertMaterial({ map: loadTex('/basement-wall.png') });
+        floorMat = new THREE.MeshLambertMaterial({ map: loadTex('/basement-floor.png', floorRepeat, floorRepeat) });
+        ceilMat  = new THREE.MeshLambertMaterial({ map: loadTex('/basement-ceiling.png', floorRepeat, floorRepeat) });
+      }
+
+      const obsMat = new THREE.MeshLambertMaterial({ map: loadTex('/basement-wall.png') });
+
+      // ── Ground plane ───────────────────────────────────────────────────
+      const planeGeo = new THREE.PlaneGeometry(W * CELL_SIZE, H * CELL_SIZE);
+      const floorMesh = new THREE.Mesh(planeGeo, floorMat);
+      floorMesh.rotation.x = -Math.PI / 2;
+      floorMesh.position.set((W - 1) * CELL_SIZE / 2, yBase, (H - 1) * CELL_SIZE / 2);
+      floorMesh.receiveShadow = true;
+      group.add(floorMesh);
+
+      // ── Ceiling (skipped for village) ──────────────────────────────────
+      if (theme.hasCeiling) {
+        const ceil = new THREE.Mesh(planeGeo.clone(), ceilMat);
+        ceil.rotation.x = Math.PI / 2;
+        ceil.position.set(floorMesh.position.x, yBase + WALL_HEIGHT, floorMesh.position.z);
+        group.add(ceil);
+      }
+
+      // ── Walls ──────────────────────────────────────────────────────────
+      const windowMat = theme.hasWindows
+        ? new THREE.MeshBasicMaterial({ color: theme.windowColor, transparent: true, opacity: 0.9 })
+        : null;
+
+      for (let z = 0; z < H; z++) {
+        for (let x = 0; x < W; x++) {
+          const cell  = floor.cells[z][x];
+          const wx    = x * CELL_SIZE;
+          const wz    = z * CELL_SIZE;
+          const north = floor.cells[z - 1]?.[x];
+          const south = floor.cells[z + 1]?.[x];
+          const west  = floor.cells[z]?.[x - 1];
+          const east  = floor.cells[z]?.[x + 1];
+
+          // Draw N wall — check BOTH sides; skip only when both solid (hidden)
+          const hasNWall = cell.walls.N || (north != null && north.walls.S);
+          if (hasNWall && !(isSolid(cell) && isSolid(north))) {
+            const w = this.makeWall(wallMat, CELL_SIZE + 0.01, WALL_HEIGHT, 0.22);
+            w.position.set(wx, yBase + WALL_HEIGHT / 2, wz - CELL_SIZE / 2);
+            group.add(w);
+            // Window panel on house/village outer walls
+            if (windowMat && z <= 2) {
+              const wg = new THREE.PlaneGeometry(CELL_SIZE * 0.5, WALL_HEIGHT * 0.4);
+              const wp = new THREE.Mesh(wg, windowMat);
+              wp.position.set(wx, yBase + WALL_HEIGHT * 0.6, wz - CELL_SIZE / 2 + 0.12);
+              group.add(wp);
+            }
+          }
+
+          // Draw W wall — check BOTH sides; skip only when both solid (hidden)
+          const hasWWall = cell.walls.W || (west != null && west.walls.E);
+          if (hasWWall && !(isSolid(cell) && isSolid(west))) {
+            const w = this.makeWall(wallMat, 0.22, WALL_HEIGHT, CELL_SIZE + 0.01);
+            w.position.set(wx - CELL_SIZE / 2, yBase + WALL_HEIGHT / 2, wz);
+            group.add(w);
+            if (windowMat && x <= 2) {
+              const wg = new THREE.PlaneGeometry(CELL_SIZE * 0.5, WALL_HEIGHT * 0.4);
+              const wp = new THREE.Mesh(wg, windowMat);
+              wp.rotation.y = Math.PI / 2;
+              wp.position.set(wx - CELL_SIZE / 2 + 0.12, yBase + WALL_HEIGHT * 0.6, wz);
+              group.add(wp);
+            }
+          }
+
+          // S wall — only at south boundary OR if south neighbor disagrees
+          const hasSWall = cell.walls.S || (south != null && south.walls.N);
+          if (z === H - 1 || (hasSWall && !(isSolid(cell) && isSolid(south)))) {
+            // Avoid duplicate: the N-wall pass of cell (x,z+1) may have drawn this already.
+            // Draw here only for boundary or when the N pass wouldn't have caught it.
+            if (z === H - 1 || (cell.walls.S && !south?.walls.N) || (!cell.walls.S && south?.walls.N)) {
+              const w = this.makeWall(wallMat, CELL_SIZE + 0.01, WALL_HEIGHT, 0.22);
+              w.position.set(wx, yBase + WALL_HEIGHT / 2, wz + CELL_SIZE / 2);
+              group.add(w);
+            }
+          }
+          // E wall — only at east boundary OR if east neighbor disagrees
+          const hasEWall = cell.walls.E || (east != null && east.walls.W);
+          if (x === W - 1 || (hasEWall && !(isSolid(cell) && isSolid(east)))) {
+            if (x === W - 1 || (cell.walls.E && !east?.walls.W) || (!cell.walls.E && east?.walls.W)) {
+              const w = this.makeWall(wallMat, 0.22, WALL_HEIGHT, CELL_SIZE + 0.01);
+              w.position.set(wx + CELL_SIZE / 2, yBase + WALL_HEIGHT / 2, wz);
+              group.add(w);
+            }
+          }
+
+          // Obstacle
+          if (cell.hasObstacle) {
+            const og = new THREE.BoxGeometry(CELL_SIZE * 0.88, OBSTACLE_HEIGHT, CELL_SIZE * 0.88);
+            const om = new THREE.Mesh(og, obsMat);
+            om.position.set(wx, yBase + OBSTACLE_HEIGHT / 2, wz);
+            group.add(om);
+          }
+
+          // Stairs visual — face toward an open neighbor
+          if (cell.stairs === 'up') {
+            const stairRot = this.getStairRotation(floor, x, z);
+            this.makeStaircase(group, wallMat, wx, wz, yBase, stairRot);
+          }
+
+          // Exit portal
+          if (cell.isExit) {
+            const eg = new THREE.BoxGeometry(CELL_SIZE * 0.8, 0.22, CELL_SIZE * 0.8);
+            const em = new THREE.MeshLambertMaterial({ color: 0x00ff88, emissive: 0x00aa44 });
+            this.exitMesh = new THREE.Mesh(eg, em);
+            this.exitMesh.position.set(wx, yBase + 0.12, wz);
+            group.add(this.exitMesh);
+          }
+        }
+      }
+
+      // Village: add street lanterns at intersections
+      if (floor.type === 'village') {
+        this.addStreetLanterns(group, floor, fi, yBase);
+      }
+
+      this.groups[fi] = group;
+      scene.add(group);
+    });
+  }
+
+  /**
+   * Determine which direction a stair cell should face.
+   * Returns rotation in radians (Y-axis): 0 = +Z (south), PI/2 = +X (east), etc.
+   * Prefers the direction with an open (non-solid) neighbor.
+   */
+  private getStairRotation(floor: MazeFloor, x: number, z: number): number {
+    const cell = floor.cells[z][x];
+    // Check which walls are open (passage exists)
+    const openN = !cell.walls.N && z > 0 && !isSolid(floor.cells[z - 1]?.[x]);
+    const openS = !cell.walls.S && z < floor.height - 1 && !isSolid(floor.cells[z + 1]?.[x]);
+    const openE = !cell.walls.E && x < floor.width - 1 && !isSolid(floor.cells[z]?.[x + 1]);
+    const openW = !cell.walls.W && x > 0 && !isSolid(floor.cells[z]?.[x - 1]);
+
+    // Face toward the open side (stairs ascend from the open side upward)
+    if (openS && !openN) return 0;               // face south (+Z)
+    if (openN && !openS) return Math.PI;          // face north (-Z)
+    if (openE && !openW) return -Math.PI / 2;     // face east (+X)
+    if (openW && !openE) return Math.PI / 2;      // face west (-X)
+
+    // Multiple open sides — prefer S, then N, E, W
+    if (openS) return 0;
+    if (openN) return Math.PI;
+    if (openE) return -Math.PI / 2;
+    if (openW) return Math.PI / 2;
+
+    return 0; // fallback: face south
+  }
+
+  private makeStaircase(group: THREE.Group, mat: THREE.Material, wx: number, wz: number, yBase: number, rotation: number = 0) {
+    const steps = 7;
+    const stepH = (WALL_HEIGHT + 1.0) / steps;
+    const stepD = CELL_SIZE / steps;
+    const stepW = CELL_SIZE * 0.7;
+
+    // Build stairs in a group, then rotate the whole group
+    const stairGroup = new THREE.Group();
+    stairGroup.position.set(wx, 0, wz);
+
+    for (let i = 0; i < steps; i++) {
+      const g = new THREE.BoxGeometry(stepW, stepH * 0.9, stepD);
+      const m = new THREE.Mesh(g, mat);
+      // Position relative to center (0,0,0) — stairs go from -Z to +Z, ascending
+      m.position.set(0, yBase + stepH * i + stepH * 0.45, -CELL_SIZE / 2 + stepD * i + stepD / 2);
+      stairGroup.add(m);
+      this.stairMeshes.push(m);
+    }
+
+    // Side railings
+    const railGeo = new THREE.BoxGeometry(0.1, WALL_HEIGHT * 0.6, CELL_SIZE);
+    const railMat = new THREE.MeshLambertMaterial({ color: 0x332211 });
+    [-stepW / 2 - 0.1, stepW / 2 + 0.1].forEach(ox => {
+      const r = new THREE.Mesh(railGeo, railMat);
+      r.position.set(ox, yBase + WALL_HEIGHT * 0.3, 0);
+      stairGroup.add(r);
+    });
+
+    stairGroup.rotation.y = rotation;
+    group.add(stairGroup);
+  }
+
+  private addStreetLanterns(group: THREE.Group, floor: MazeFloor, _fi: number, yBase: number) {
+    const W = floor.width, H = floor.height;
+    const LANTERN_STEP = Math.max(7, Math.floor(Math.max(W, H) / 20));
+    for (let z = 0; z < H; z += LANTERN_STEP) {
+      for (let x = 0; x < W; x += LANTERN_STEP) {
+        const c = floor.cells[z]?.[x];
+        if (!c || isSolid(c)) continue;
+        // Lantern post
+        const postGeo = new THREE.CylinderGeometry(0.06, 0.08, WALL_HEIGHT * 0.8, 6);
+        const postMat = new THREE.MeshLambertMaterial({ color: 0x222222 });
+        const post = new THREE.Mesh(postGeo, postMat);
+        post.position.set(x * CELL_SIZE - CELL_SIZE * 0.4, yBase + WALL_HEIGHT * 0.4, z * CELL_SIZE - CELL_SIZE * 0.4);
+        group.add(post);
+        // Lantern head
+        const headGeo = new THREE.BoxGeometry(0.3, 0.3, 0.3);
+        const headMat = new THREE.MeshBasicMaterial({ color: 0xffcc66 });
+        const head = new THREE.Mesh(headGeo, headMat);
+        head.position.set(post.position.x, yBase + WALL_HEIGHT * 0.82, post.position.z);
+        group.add(head);
+      }
+    }
+  }
+
+  private makeWall(mat: THREE.Material, w: number, h: number, d: number): THREE.Mesh {
+    const m = new THREE.Mesh(new THREE.BoxGeometry(w, h, d), mat);
+    m.castShadow = true;
+    m.receiveShadow = true;
+    return m;
+  }
+
+  update(t: number) {
+    if (this.exitMesh) {
+      (this.exitMesh.material as THREE.MeshLambertMaterial).emissiveIntensity =
+        0.4 + Math.sin(t * 3) * 0.4;
+    }
+  }
+
+  dispose(scene: THREE.Scene) {
+    this.groups.forEach(g => scene.remove(g));
+    this.stairMeshes = [];
+    this.exitMesh = null;
+  }
+}

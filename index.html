@@ -1,0 +1,185 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Maze Runner</title>
+  <style>
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    body {
+      background: #000;
+      overflow: hidden;
+      font-family: 'Courier New', monospace;
+    }
+    #canvas-container {
+      width: 100vw;
+      height: 100vh;
+      position: relative;
+    }
+    #canvas-container > canvas {
+      display: block;
+      width: 100% !important;
+      height: 100% !important;
+    }
+    canvas { display: block; }
+    #hud {
+      position: absolute;
+      top: 0; left: 0;
+      width: 100%; height: 100%;
+      pointer-events: none;
+      color: #fff;
+    }
+    #crosshair {
+      position: absolute;
+      top: 50%; left: 50%;
+      transform: translate(-50%, -50%);
+      width: 20px; height: 20px;
+    }
+    #crosshair::before, #crosshair::after {
+      content: '';
+      position: absolute;
+      background: rgba(255,255,255,0.8);
+    }
+    #crosshair::before {
+      width: 2px; height: 100%;
+      left: 50%; transform: translateX(-50%);
+    }
+    #crosshair::after {
+      width: 100%; height: 2px;
+      top: 50%; transform: translateY(-50%);
+    }
+    #info-panel {
+      position: absolute;
+      top: 16px; left: 16px;
+      background: rgba(0,0,0,0.5);
+      border: 1px solid rgba(255,255,255,0.2);
+      border-radius: 4px;
+      padding: 8px 12px;
+      font-size: 13px;
+      line-height: 1.6;
+    }
+    #enemy-status {
+      position: absolute;
+      top: 16px; right: 16px;
+      background: rgba(0,0,0,0.5);
+      border: 1px solid rgba(255,255,255,0.2);
+      border-radius: 4px;
+      padding: 8px 12px;
+      font-size: 13px;
+      text-align: right;
+    }
+    #enemy-indicator {
+      font-weight: bold;
+      letter-spacing: 1px;
+    }
+    #overlay {
+      position: absolute;
+      top: 0; left: 0;
+      width: 100%; height: 100%;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      background: rgba(0,0,0,0.85);
+      pointer-events: all;
+      z-index: 10;
+    }
+    #overlay h1 {
+      font-size: 3rem;
+      letter-spacing: 6px;
+      margin-bottom: 8px;
+      text-transform: uppercase;
+      color: #e8c56d;
+    }
+    #overlay p {
+      color: #aaa;
+      margin-bottom: 4px;
+      font-size: 0.9rem;
+    }
+    #overlay .controls-list {
+      color: #888;
+      font-size: 0.8rem;
+      margin-bottom: 28px;
+      text-align: center;
+      line-height: 1.8;
+    }
+    #start-btn {
+      background: #e8c56d;
+      color: #000;
+      border: none;
+      padding: 12px 36px;
+      font-size: 1rem;
+      font-family: 'Courier New', monospace;
+      font-weight: bold;
+      letter-spacing: 3px;
+      text-transform: uppercase;
+      cursor: pointer;
+      border-radius: 2px;
+      transition: background 0.2s;
+    }
+    #start-btn:hover { background: #f0d080; }
+    #message {
+      position: absolute;
+      top: 50%; left: 50%;
+      transform: translate(-50%, -50%);
+      font-size: 2rem;
+      font-weight: bold;
+      letter-spacing: 4px;
+      text-shadow: 0 0 20px currentColor;
+      opacity: 0;
+      transition: opacity 0.3s;
+      pointer-events: none;
+    }
+    #minimap {
+      position: absolute;
+      bottom: 16px; right: 16px;
+      opacity: 0.7;
+      border: 1px solid rgba(255,255,255,0.3);
+      border-radius: 2px;
+    }
+    #floor-indicator {
+      font-size: 0.8rem;
+      color: #aaa;
+      margin-top: 2px;
+    }
+  </style>
+</head>
+<body>
+  <div id="canvas-container">
+    <div id="hud" style="display:none;">
+      <div id="crosshair"></div>
+      <div id="info-panel">
+        <div id="floor-text">PLANTA 1 / 3</div>
+        <div id="floor-indicator" id="objective-text">🚪 Encuentra la salida</div>
+      </div>
+      <div id="enemy-status">
+        <div style="font-size:0.7rem;color:#888;margin-bottom:2px;">ENTIDAD</div>
+        <div id="enemy-indicator" style="color:#4af;">◉ BUSCANDO</div>
+      </div>
+      <div id="battery-hud" style="position:absolute;bottom:20px;left:16px;display:flex;align-items:center;gap:8px;background:rgba(0,0,0,0.5);border:1px solid rgba(255,255,255,0.2);border-radius:4px;padding:6px 12px;">
+        <span id="battery-icon" style="font-size:18px;">🔦</span>
+        <div style="display:flex;flex-direction:column;gap:3px;">
+          <span id="flashlight-status" style="font-size:11px;color:#888;letter-spacing:1px;font-weight:bold;">OFF</span>
+          <div style="width:100px;height:10px;background:rgba(255,255,255,0.15);border-radius:4px;overflow:hidden;">
+            <div id="battery-fill" style="height:100%;width:100%;background:#4af;transition:width 0.3s,background 0.3s;border-radius:4px;"></div>
+          </div>
+        </div>
+        <span id="battery-pct" style="font-size:11px;color:#aaa;min-width:30px;">100%</span>
+      </div>
+      <canvas id="minimap" width="120" height="120"></canvas>
+      <div id="message"></div>
+    </div>
+    <div id="overlay">
+      <h1>MAZE</h1>
+      <p style="color:#e8c56d;margin-bottom:20px;letter-spacing:2px;">RUNNER</p>
+      <div class="controls-list">
+        WASD — Mover &nbsp;|&nbsp; RATÓN — Mirar &nbsp;|&nbsp; ESPACIO — Saltar &nbsp;|&nbsp; F — Linterna<br/>
+        Llega a la salida en la última planta<br/>
+        <span style="color:#f66;">Cuidado con lo que te persigue...</span>
+      </div>
+      <button id="start-btn">ENTRAR</button>
+    </div>
+  </div>
+  <script type="module" src="/src/main.ts"></script>
+</body>
+</html>
