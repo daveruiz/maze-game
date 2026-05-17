@@ -1,0 +1,57 @@
+# Maze Game
+
+A 3D first-person horror maze game built with Three.js and TypeScript — made just for fun!
+
+## Play
+
+https://daveruiz.github.io/maze-game/
+
+## About
+
+This is a personal project made for fun and learning. Navigate through three increasingly challenging floors, avoid enemies, and find the exit!
+
+### Floors
+
+- **Catacumbas** — tight recursive maze with obstacles
+- **La Casa** — a sprawling haunted house with rooms and corridors (2x size)
+- **El Pueblo** — a massive abandoned village with dead ends and narrow alleys (5x size)
+
+### Features
+
+- First-person 3D navigation with flashlight mechanics
+- Multiple enemies per floor with 3D positional audio
+- Directional enemy sprites (front/back/side)
+- BFS pathfinding for enemy AI
+- Flashlight battery drain/recharge system
+- Post-processing effects (film grain, vignette, posterization)
+- Minimap with enemy tracking
+- Jumpable obstacles
+
+### Controls
+
+- **WASD / Arrow keys** — Move
+- **Mouse** — Look around
+- **Space** — Jump
+- **F** — Toggle flashlight
+- **L** — Debug lighting (dev)
+
+## Tech Stack
+
+- Three.js
+- TypeScript
+- Vite
+- Web Audio API (procedural + MP3 positional audio)
+
+## Build
+
+```bash
+# Unix/Mac
+npm install && npm run build
+
+# Windows (via WSL)
+powershell -File build.ps1
+```
+
+## License
+
+This project is for personal/educational use. Feel free to explore the code!
