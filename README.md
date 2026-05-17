@@ -6,7 +6,27 @@ A 3D first-person horror maze game built with Three.js and TypeScript — made j
 
 https://daveruiz.github.io/maze-game/
 
-## About
+## The Story
+
+You remember him as a baby. Those tiny hands. That toothless smile. He used to run toward you with arms wide open, shouting *"Papa!"* like you were the greatest thing in the universe.
+
+Then he turned thirteen.
+
+At first, it was subtle. The grunts. The eye rolls. The way he'd appear in the kitchen at midnight demanding food — not asking, *demanding* — like some kind of creature risen from the depths. His room became a forbidden catacomb: dark, foul-smelling, and full of unspeakable things.
+
+By fourteen, the transformation was complete. The sweet boy was gone. In his place stood something else entirely — a towering, ravenous beast fueled by hormones and Wi-Fi, roaming the house at all hours, hunting you down with a single, terrifying purpose:
+
+*"Dad. I need money."*
+
+There is no reasoning with him. There is no negotiation. He can hear the sound of a wallet opening from three floors away. He can smell fear. And he is *always* hungry.
+
+Your only hope? Run. Hide in the darkness. Turn off your flashlight so he can't find you. Navigate the increasingly chaotic maze that your home has become — from the tight, suffocating **catacombs** of the basement where you've been hiding your emergency snacks, through the sprawling **haunted house** that used to be your peaceful home, and into the vast, abandoned **village** outside where other fathers have already fled.
+
+He is out there. He is getting faster. And he brought friends.
+
+*Good luck, Papa.*
+
+---
 
 This is a personal project made for fun and learning. Navigate through three increasingly challenging floors, avoid enemies, and find the exit!
 
