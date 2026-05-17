@@ -594,21 +594,21 @@ export class MazeRenderer {
       const floorRepeat = Math.max(W, H) / 2;
 
       if (floor.type === 'house') {
-        wallMat  = new THREE.MeshLambertMaterial({ map: loadTex('/home-wall.png') });
-        floorMat = new THREE.MeshLambertMaterial({ map: loadTex('/home-floor.png', floorRepeat, floorRepeat) });
-        ceilMat  = new THREE.MeshLambertMaterial({ map: loadTex('/home-ceiling.png', floorRepeat, floorRepeat) });
+        wallMat  = new THREE.MeshLambertMaterial({ map: loadTex('home-wall.png') });
+        floorMat = new THREE.MeshLambertMaterial({ map: loadTex('home-floor.png', floorRepeat, floorRepeat) });
+        ceilMat  = new THREE.MeshLambertMaterial({ map: loadTex('home-ceiling.png', floorRepeat, floorRepeat) });
       } else if (floor.type === 'village') {
-        wallMat  = new THREE.MeshLambertMaterial({ map: loadTex('/village-wall.png') });
-        floorMat = new THREE.MeshLambertMaterial({ map: loadTex('/vilage-floor.png', floorRepeat, floorRepeat) });
+        wallMat  = new THREE.MeshLambertMaterial({ map: loadTex('village-wall.png') });
+        floorMat = new THREE.MeshLambertMaterial({ map: loadTex('vilage-floor.png', floorRepeat, floorRepeat) });
         ceilMat  = new THREE.MeshLambertMaterial({ color: 0x000000 }); // open sky
       } else {
         // Catacombs / basement
-        wallMat  = new THREE.MeshLambertMaterial({ map: loadTex('/basement-wall.png') });
-        floorMat = new THREE.MeshLambertMaterial({ map: loadTex('/basement-floor.png', floorRepeat, floorRepeat) });
-        ceilMat  = new THREE.MeshLambertMaterial({ map: loadTex('/basement-ceiling.png', floorRepeat, floorRepeat) });
+        wallMat  = new THREE.MeshLambertMaterial({ map: loadTex('basement-wall.png') });
+        floorMat = new THREE.MeshLambertMaterial({ map: loadTex('basement-floor.png', floorRepeat, floorRepeat) });
+        ceilMat  = new THREE.MeshLambertMaterial({ map: loadTex('basement-ceiling.png', floorRepeat, floorRepeat) });
       }
 
-      const obsMat = new THREE.MeshLambertMaterial({ map: loadTex('/basement-wall.png') });
+      const obsMat = new THREE.MeshLambertMaterial({ map: loadTex('basement-wall.png') });
 
       // ── Ground plane ───────────────────────────────────────────────────
       const planeGeo = new THREE.PlaneGeometry(W * CELL_SIZE, H * CELL_SIZE);

@@ -55,9 +55,9 @@ export class Enemy {
     // enemy-front.png = the face (front of creature)
     // enemy-back.png  = the back/spines
     // enemy-side.png  = side profile
-    this.texFront = loader.load('/enemy-front.png');
-    this.texBack  = loader.load('/enemy-back.png');
-    this.texSide  = loader.load('/enemy-side.png');
+    this.texFront = loader.load('enemy-front.png');
+    this.texBack  = loader.load('enemy-back.png');
+    this.texSide  = loader.load('enemy-side.png');
 
     // Configure all textures
     [this.texFront, this.texBack, this.texSide].forEach(t => {
