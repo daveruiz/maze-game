@@ -111,6 +111,26 @@ export class Player {
   requestLock() { document.body.requestPointerLock(); }
   isLocked()    { return this.locked; }
 
+  /** Mobile: set a virtual key state */
+  setKey(code: string, pressed: boolean) { this.keys[code] = pressed; }
+
+  /** Mobile: apply look delta (touch drag) */
+  applyLookDelta(dx: number, dy: number) {
+    this.yaw   -= dx;
+    this.pitch  -= dy;
+    this.pitch = Math.max(-Math.PI / 2.2, Math.min(Math.PI / 2.2, this.pitch));
+  }
+
+  /** Mobile: trigger jump (mirrors keydown Space logic) */
+  triggerJump() {
+    if (this.isOnGround && this.stamina >= STAMINA_JUMP_COST * 0.5) {
+      this.verticalVelocity = JUMP_FORCE;
+      this.isOnGround = false;
+      this.stamina = Math.max(0, this.stamina - STAMINA_JUMP_COST);
+      if (this.stamina <= 0) this.exhausted = true;
+    }
+  }
+
   getYaw(): number { return this.yaw; }
 
   update(dt: number): { stairsUp: boolean; stairsDown: boolean; isExit: boolean } {

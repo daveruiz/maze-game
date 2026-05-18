@@ -9,6 +9,7 @@ import { Item, ItemType } from './Item';
 import { AudioManager } from './AudioManager';
 import { EnemyState } from './types';
 import { HorrorShader } from './HorrorShader';
+import { MobileControls, isMobileDevice } from './MobileControls';
 
 const NUM_FLOORS = 3;
 
@@ -42,6 +43,7 @@ export class Game {
   private debugRevealMap = false;
   private debugAmbient!: THREE.AmbientLight;
   private debugMenuOpen = false;
+  private mobileControls: MobileControls | null = null;
 
   // Floor culling
   private currentVisibleFloor = -1;
@@ -87,7 +89,7 @@ export class Game {
     container.appendChild(this.renderer.domElement);
 
     // Camera
-    this.camera = new THREE.PerspectiveCamera(75, window.innerWidth / window.innerHeight, 0.05, 200);
+    this.camera = new THREE.PerspectiveCamera(75, window.innerWidth / window.innerHeight, 0.05, 80);
 
     // Scene — camera must be added for spotlight target to work
     this.scene = new THREE.Scene();
@@ -142,18 +144,8 @@ export class Game {
 
     // Flashlight toggle
     document.addEventListener('keydown', e => {
-      if (e.code === 'KeyF' && !e.repeat) {
-        if (!this.flashlightOn && this.flashBattery < 5) return; // too low to turn on
-        this.flashlightOn = !this.flashlightOn;
-        if (this.flashlightOn) {
-          this.flashBattery = Math.max(0, this.flashBattery - 1); // 1% drain penalty on toggle
-        }
-        this.audio.playFlashlightToggle(this.flashlightOn);
-      }
-      // Debug menu toggle (backtick / tilde key)
-      if (e.code === 'Backquote' && !e.repeat) {
-        this.toggleDebugMenu();
-      }
+      if (e.code === 'KeyF' && !e.repeat) this.toggleFlashlight();
+      if (e.code === 'Backquote' && !e.repeat) this.toggleDebugMenu();
     });
 
     this.setupDebugMenu();
@@ -241,7 +233,22 @@ export class Game {
     this.horrorPass.uniforms['vhsIntensity'].value = 0;
 
     this.hudEl.style.display = 'block';
-    this.player.requestLock();
+
+    // Mobile: touch controls instead of pointer lock
+    if (isMobileDevice()) {
+      if (!this.mobileControls) {
+        this.mobileControls = new MobileControls(this.player, {
+          toggleFlashlight: () => this.toggleFlashlight()
+        });
+        this.mobileControls.init();
+      } else {
+        // Update player reference (restart creates a new Player)
+        this.mobileControls.setPlayer(this.player);
+      }
+      this.mobileControls.showCTAIfNeeded();
+    } else {
+      this.player.requestLock();
+    }
 
     this.running = true;
     this.clock.start();
@@ -357,6 +364,9 @@ export class Game {
       }
       return;
     }
+
+    // Mobile: sync virtual controls before player tick
+    this.mobileControls?.update();
 
     // Player
     const { stairsUp, isExit } = this.player.update(dt);
@@ -776,6 +786,15 @@ export class Game {
     revealCb.addEventListener('change', () => {
       this.debugRevealMap = revealCb.checked;
     });
+  }
+
+  private toggleFlashlight() {
+    if (!this.flashlightOn && this.flashBattery < 5) return;
+    this.flashlightOn = !this.flashlightOn;
+    if (this.flashlightOn) {
+      this.flashBattery = Math.max(0, this.flashBattery - 1);
+    }
+    this.audio.playFlashlightToggle(this.flashlightOn);
   }
 
   private toggleDebugMenu() {

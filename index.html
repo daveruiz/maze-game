@@ -2,7 +2,7 @@
 <html lang="es">
 <head>
   <meta charset="UTF-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no, viewport-fit=cover" />
   <title>Maze Runner</title>
   <style>
     * { margin: 0; padding: 0; box-sizing: border-box; }
@@ -10,6 +10,8 @@
       background: #000;
       overflow: hidden;
       font-family: 'Courier New', monospace;
+      touch-action: none;
+      -webkit-touch-callout: none;
     }
     #canvas-container {
       width: 100vw;
