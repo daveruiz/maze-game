@@ -12,13 +12,12 @@ const LOSE_RANGE        = 20;   // enemy loses sight beyond this
 const CATCH_DISTANCE    = 1.2;
 const PATH_UPDATE_INTERVAL = 0.5; // seconds
 
-// Separation — enemies push away from each other during patrol
-const SEPARATION_RADIUS  = 12;  // world units — start repelling within this
-const SEPARATION_STRENGTH = 3.0;
+// Separation — enemies prefer patrol targets far from siblings
+const SEPARATION_RADIUS  = 12;  // world units — penalise targets near siblings
 
 // Stuck detection
-const STUCK_CHECK_INTERVAL = 3.0; // seconds
-const STUCK_DISTANCE       = 1.5; // if moved less than this in the interval, considered stuck
+const STUCK_CHECK_INTERVAL = 2.0; // seconds
+const STUCK_DISTANCE       = 1.0; // if moved less than this in the interval, considered stuck
 
 // Investigation after losing sight
 const INVESTIGATE_DURATION = 4.0; // seconds to investigate area after losing player
@@ -117,33 +116,57 @@ export class Enemy {
     this.scene.add(this.mesh);
   }
 
-  /** Spawn at a position far from the entry AND far from already-spawned siblings */
-  spawn(floorIndex: number, existingPositions: THREE.Vector3[] = []) {
+  /**
+   * Spawn near an assigned interest point (key, stairs, exit) but far from
+   * the player entry and from already-spawned siblings. Each enemy is assigned
+   * a different interest point via its patrol zone index.
+   */
+  spawn(floorIndex: number, existingPositions: THREE.Vector3[] = [], interestPoints: THREE.Vector3[] = []) {
     this.floorIndex = floorIndex;
     this.homeFloor = floorIndex;
 
     const floor = this.maze.floors[floorIndex];
     const entry = floor.entryCell;
-    const reachable = this.floodFill(floorIndex, entry.x, entry.z);
-    this.reachableCells = reachable; // cache for patrol
+    // Use enemy BFS (excludes obstacle cells — enemies can't jump them)
+    const reachable = this.bfsReachableFrom(entry.x, entry.z, floorIndex);
+    this.reachableCells = reachable;
 
-    // Score each reachable cell: far from entry + far from existing enemies
+    // Each enemy gets assigned ONE interest point (round-robin by patrol zone)
+    let assignedIP: { x: number; z: number } | null = null;
+    if (interestPoints.length > 0) {
+      const ip = interestPoints[this.patrolZone % interestPoints.length];
+      assignedIP = this.maze.worldToCell(ip.x, ip.z, floorIndex);
+    }
+
     let bestScore = -Infinity;
     let bestCell = reachable[0];
     for (const c of reachable) {
       const dx = c.x - entry.x, dz = c.z - entry.z;
-      let score = Math.sqrt(dx * dx + dz * dz); // distance from entry
+      const distFromEntry = Math.sqrt(dx * dx + dz * dz);
+      // Must be far from entry (where player spawns)
+      let score = Math.min(distFromEntry, 25);
 
-      // Penalise proximity to already-placed enemies
-      for (const ep of existingPositions) {
-        const ec = this.maze.worldToCell(ep.x, ep.z, floorIndex);
-        const edx = c.x - ec.x, edz = c.z - ec.z;
-        const eDist = Math.sqrt(edx * edx + edz * edz);
-        // Strong penalty when close
-        score += Math.min(eDist, 20); // reward distance up to 20 cells
+      // Near assigned interest point (but not ON it — 3-15 cells ideal)
+      if (assignedIP) {
+        const ipDist = Math.sqrt((c.x - assignedIP.x) ** 2 + (c.z - assignedIP.z) ** 2);
+        if (ipDist < 3) {
+          score -= (3 - ipDist) * 8; // too close
+        } else if (ipDist < 15) {
+          score += 15 - ipDist; // sweet spot: reward being 3-15 cells away
+        } else {
+          score -= (ipDist - 15) * 0.5; // too far, mild penalty
+        }
       }
 
-      score += Math.random() * 3; // jitter
+      // Far from already-placed enemies (strong separation)
+      for (const ep of existingPositions) {
+        const ec = this.maze.worldToCell(ep.x, ep.z, floorIndex);
+        const eDist = Math.sqrt((c.x - ec.x) ** 2 + (c.z - ec.z) ** 2);
+        // Strong bonus for distance — scales up to 30
+        score += Math.min(eDist, 30) * 1.5;
+      }
+
+      score += Math.random() * 3;
 
       if (score > bestScore) {
         bestScore = score;
@@ -157,39 +180,6 @@ export class Enemy {
     this.mesh.position.copy(this.pos);
     this.stuckCheckPos.copy(this.pos);
     this.state = EnemyState.SEARCHING;
-  }
-
-  /** Flood-fill from a start cell — returns all reachable open cells */
-  private floodFill(fi: number, sx: number, sz: number): Cell[] {
-    const floor = this.maze.floors[fi];
-    if (!floor) return [];
-    const W = floor.width, H = floor.height;
-    const visited = new Set<string>();
-    const result: Cell[] = [];
-    const queue: { x: number; z: number }[] = [{ x: sx, z: sz }];
-    visited.add(`${sx},${sz}`);
-
-    while (queue.length > 0) {
-      const { x, z } = queue.shift()!;
-      const cell = floor.cells[z]?.[x];
-      if (!cell) continue;
-      if (cell.hasObstacle) continue;
-      result.push(cell);
-
-      const tryMove = (nx: number, nz: number) => {
-        const key = `${nx},${nz}`;
-        if (nx >= 0 && nx < W && nz >= 0 && nz < H && !visited.has(key)) {
-          visited.add(key);
-          queue.push({ x: nx, z: nz });
-        }
-      };
-
-      if (!cell.walls.N) tryMove(x, z - 1);
-      if (!cell.walls.S) tryMove(x, z + 1);
-      if (!cell.walls.E) tryMove(x + 1, z);
-      if (!cell.walls.W) tryMove(x - 1, z);
-    }
-    return result;
   }
 
   /** Alert this enemy to investigate a position (called by siblings) */
@@ -223,28 +213,24 @@ export class Enemy {
     this.stuckCheckTimer += dt;
     if (this.stuckCheckTimer >= STUCK_CHECK_INTERVAL) {
       const movedDist = this.pos.distanceTo(this.stuckCheckPos);
-      if (movedDist < STUCK_DISTANCE && this.state === EnemyState.SEARCHING) {
-        this.searchTarget = null;
-        this.path = [];
-        this.searchTimer = 0;
+      if (movedDist < STUCK_DISTANCE && (this.state === EnemyState.SEARCHING)) {
+        // Force a completely new path to a random reachable cell (no obstacles)
+        const cells = this.reachableCells.filter(c => !c.hasObstacle);
+        if (cells.length > 0) {
+          const pick = cells[Math.floor(Math.random() * cells.length)];
+          const wp = this.maze.cellToWorld(pick.x, pick.z, this.floorIndex);
+          wp.y = this.pos.y;
+          this.searchTarget = wp;
+          this.path = this.bfsPath(this.pos, wp);
+          this.searchTimer = 6;
+        }
       }
       this.stuckCheckPos.copy(this.pos);
       this.stuckCheckTimer = 0;
     }
 
-    // Sibling proximity — if too close to another enemy while searching,
-    // pick a new target, but only once every few seconds (cooldown via stuckCheckTimer)
-    // to avoid resetting every frame in tight corridors
-    if (this.state === EnemyState.SEARCHING && this.investigateTimer <= 0
-        && this.searchTimer > 1 /* don't reset a freshly picked target */) {
-      for (const sib of this.siblings) {
-        if (sib === this || sib.homeFloor !== this.homeFloor) continue;
-        if (this.pos.distanceTo(sib.pos) < 4) {
-          this.searchTimer = 0; // will trigger new target on next doSearch call
-          break;
-        }
-      }
-    }
+    // Separation is handled at target-selection level (pickPatrolTarget scores
+    // cells far from siblings). No runtime movement force — avoids pushing into walls.
 
     const distToPlayer = this.pos.distanceTo(playerPos);
     const effectiveSight = flashlightOn ? SIGHT_RANGE : SIGHT_RANGE_DARK;
@@ -330,7 +316,8 @@ export class Enemy {
     if (!floor) return center.clone();
 
     const centerCell = this.maze.worldToCell(center.x, center.z, this.floorIndex);
-    const cells = this.reachableCells;
+    // Always exclude obstacle cells — enemies cannot traverse them
+    const cells = this.reachableCells.filter(c => !c.hasObstacle);
 
     // Find cells within investigation radius of the center
     const nearby = cells.filter(c => {
@@ -436,7 +423,8 @@ export class Enemy {
 
   /** Pick a patrol target that's far away and far from other enemies */
   private pickPatrolTarget(): THREE.Vector3 {
-    const cells = this.reachableCells;
+    // Always exclude obstacle cells — enemies cannot traverse them
+    const cells = this.reachableCells.filter(c => !c.hasObstacle);
     const floor = this.maze.floors[this.floorIndex];
     if (!floor || cells.length === 0) return this.pos.clone();
 
@@ -530,38 +518,10 @@ export class Enemy {
       const dir = diff.clone().normalize();
       this.moveDir.lerp(dir, 0.15);
       this.moveDir.normalize();
-
-      // Apply separation force from other enemies (during search/investigate only)
-      if (this.state === EnemyState.SEARCHING) {
-        const sep = this.getSeparationForce();
-        const sepScaled = sep.multiplyScalar(maxDist * SEPARATION_STRENGTH);
-        diff.normalize().multiplyScalar(Math.min(maxDist, dist));
-        diff.add(sepScaled);
-        // Don't overshoot
-        if (diff.length() > maxDist * 1.5) diff.normalize().multiplyScalar(maxDist * 1.5);
-      } else {
-        diff.normalize().multiplyScalar(Math.min(maxDist, dist));
-      }
+      diff.normalize().multiplyScalar(Math.min(maxDist, dist));
       this.pos.add(diff);
     }
     return dist;
-  }
-
-  /** Compute a separation vector pushing away from nearby siblings */
-  private getSeparationForce(): THREE.Vector3 {
-    const force = new THREE.Vector3();
-    for (const sib of this.siblings) {
-      if (sib === this || sib.homeFloor !== this.homeFloor) continue;
-      const toMe = this.pos.clone().sub(sib.pos);
-      toMe.y = 0;
-      const dist = toMe.length();
-      if (dist < SEPARATION_RADIUS && dist > 0.01) {
-        // Strength increases as they get closer
-        toMe.normalize().multiplyScalar((SEPARATION_RADIUS - dist) / SEPARATION_RADIUS);
-        force.add(toMe);
-      }
-    }
-    return force;
   }
 
   /** Simple BFS pathfinding on the maze grid */
@@ -594,10 +554,11 @@ export class Enemy {
       if (!cell) continue;
 
       const neighbors: { x: number; z: number }[] = [];
-      if (!cell.walls.N && inBounds(cur.x, cur.z - 1)) neighbors.push({ x: cur.x, z: cur.z - 1 });
-      if (!cell.walls.S && inBounds(cur.x, cur.z + 1)) neighbors.push({ x: cur.x, z: cur.z + 1 });
-      if (!cell.walls.E && inBounds(cur.x + 1, cur.z)) neighbors.push({ x: cur.x + 1, z: cur.z });
-      if (!cell.walls.W && inBounds(cur.x - 1, cur.z)) neighbors.push({ x: cur.x - 1, z: cur.z });
+      // Check both sides of each wall for robustness against any asymmetry
+      if (inBounds(cur.x, cur.z - 1) && (!cell.walls.N || !floor.cells[cur.z - 1]?.[cur.x]?.walls.S)) neighbors.push({ x: cur.x, z: cur.z - 1 });
+      if (inBounds(cur.x, cur.z + 1) && (!cell.walls.S || !floor.cells[cur.z + 1]?.[cur.x]?.walls.N)) neighbors.push({ x: cur.x, z: cur.z + 1 });
+      if (inBounds(cur.x + 1, cur.z) && (!cell.walls.E || !floor.cells[cur.z]?.[cur.x + 1]?.walls.W)) neighbors.push({ x: cur.x + 1, z: cur.z });
+      if (inBounds(cur.x - 1, cur.z) && (!cell.walls.W || !floor.cells[cur.z]?.[cur.x - 1]?.walls.E)) neighbors.push({ x: cur.x - 1, z: cur.z });
 
       for (const n of neighbors) {
         const key = `${n.x},${n.z}`;
@@ -622,6 +583,48 @@ export class Enemy {
     }
     if (path.length > 0) path.shift();
     return path;
+  }
+
+  /**
+   * BFS reachable cells from a given cell — same as maze.floodFill but
+   * also treats hasObstacle cells as impassable (enemies can't jump them).
+   * The result excludes obstacle cells entirely.
+   */
+  private bfsReachableFrom(sx: number, sz: number, fi: number): Cell[] {
+    const floor = this.maze.floors[fi];
+    if (!floor) return [];
+    const W = floor.width, H = floor.height;
+    const visited = new Set<string>();
+    const result: Cell[] = [];
+    const queue: { x: number; z: number }[] = [{ x: sx, z: sz }];
+    visited.add(`${sx},${sz}`);
+
+    while (queue.length > 0) {
+      const { x, z } = queue.shift()!;
+      const cell = floor.cells[z]?.[x];
+      if (!cell) continue;
+      if (cell.walls.N && cell.walls.S && cell.walls.E && cell.walls.W) continue;
+      // Skip obstacle cells — enemies can't traverse them (no jumping)
+      if (cell.hasObstacle) continue;
+      result.push(cell);
+
+      const tryMove = (nx: number, nz: number) => {
+        const key = `${nx},${nz}`;
+        if (nx >= 0 && nx < W && nz >= 0 && nz < H && !visited.has(key)) {
+          const nc = floor.cells[nz]?.[nx];
+          if (nc?.hasObstacle) return; // can't enter obstacle cells
+          visited.add(key);
+          queue.push({ x: nx, z: nz });
+        }
+      };
+
+      // Check both sides of each wall for robustness
+      if (!cell.walls.N || !floor.cells[z - 1]?.[x]?.walls.S) tryMove(x, z - 1);
+      if (!cell.walls.S || !floor.cells[z + 1]?.[x]?.walls.N) tryMove(x, z + 1);
+      if (!cell.walls.E || !floor.cells[z]?.[x + 1]?.walls.W) tryMove(x + 1, z);
+      if (!cell.walls.W || !floor.cells[z]?.[x - 1]?.walls.E) tryMove(x - 1, z);
+    }
+    return result;
   }
 
   /** Raycast-based line of sight against maze walls */

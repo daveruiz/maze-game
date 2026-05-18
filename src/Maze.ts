@@ -189,6 +189,9 @@ export class MazeGenerator {
       }
     }
 
+    // Fix any one-way wall inconsistencies from overlapping carve operations
+    this.syncWalls(cells, W, H);
+
     return { cells, width: W, height: H, theme: THEMES[1], type: 'house', entryCell: { x: 1, z: 1 } };
   }
 
@@ -372,7 +375,7 @@ export class MazeGenerator {
   }
 
   /** Flood-fill from a start cell — returns all reachable open cells */
-  private floodFill(fi: number, sx: number, sz: number): Cell[] {
+  floodFill(fi: number, sx: number, sz: number): Cell[] {
     const floor = this.floors[fi];
     if (!floor) return [];
     const W = floor.width, H = floor.height;
@@ -570,6 +573,29 @@ export class MazeGenerator {
       if (cells[mz + 1]?.[mx]) cells[mz + 1][mx].walls.N = false;
       if (cells[mz]?.[mx - 1]) cells[mz][mx - 1].walls.E = false;
       if (cells[mz]?.[mx + 1]) cells[mz][mx + 1].walls.W = false;
+    }
+  }
+
+  /**
+   * Ensure wall data is bidirectionally consistent:
+   * if cell A's east wall is open, cell B (east of A) must also have west wall open, and vice versa.
+   * Fixes any one-way wall inconsistencies left by room/corridor carving.
+   */
+  private syncWalls(cells: Cell[][], W: number, H: number) {
+    for (let z = 0; z < H; z++) {
+      for (let x = 0; x < W; x++) {
+        const c = cells[z][x];
+        // East ↔ West
+        if (x < W - 1) {
+          const r = cells[z][x + 1];
+          if (!c.walls.E || !r.walls.W) { c.walls.E = false; r.walls.W = false; }
+        }
+        // South ↔ North
+        if (z < H - 1) {
+          const d = cells[z + 1][x];
+          if (!c.walls.S || !d.walls.N) { c.walls.S = false; d.walls.N = false; }
+        }
+      }
     }
   }
 

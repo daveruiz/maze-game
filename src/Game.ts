@@ -39,6 +39,7 @@ export class Game {
   private torchLight!:   THREE.PointLight; // very dim ambient torch (replaces flashlight when dead)
   private debugLight    = false;
   private debugNoEnemy  = false;
+  private debugRevealMap = false;
   private debugAmbient!: THREE.AmbientLight;
   private debugMenuOpen = false;
 
@@ -172,28 +173,10 @@ export class Game {
     this.player = new Player(this.camera, this.maze);
     this.player.spawn(0);
 
-    // Spawn enemies: 1 on floor 0, 2 on floor 1, 4 on floor 2
-    const ENEMIES_PER_FLOOR = [1, 2, 4];
-    this.enemies = [];
-    for (let fi = 0; fi < NUM_FLOORS; fi++) {
-      const count = ENEMIES_PER_FLOOR[fi] ?? 1;
-      const floorPositions: THREE.Vector3[] = [];
-      for (let i = 0; i < count; i++) {
-        const enemy = new Enemy(this.scene, this.maze, this.audio);
-        enemy.setPatrolZone(i);
-        enemy.spawn(fi, floorPositions);
-        floorPositions.push(enemy.getPosition());
-        this.enemies.push(enemy);
-      }
-    }
-    // Wire up sibling references so enemies can separate and alert each other
-    for (const enemy of this.enemies) {
-      enemy.setSiblings(this.enemies);
-    }
-
-    // Spawn collectible items: key + map + compass per floor
+    // Spawn collectible items first (so we know key positions for enemy placement)
     this.items = [];
     this.collected = {};
+    const keyPositions: Record<number, THREE.Vector3> = {};
     for (let fi = 0; fi < NUM_FLOORS; fi++) {
       this.collected[fi] = new Set();
       const itemCells = this.maze.getItemCells(fi, 3);
@@ -203,7 +186,45 @@ export class Game {
         const wp = this.maze.cellToWorld(cell.x, cell.z, fi);
         const item = new Item(this.scene, types[i], wp, fi);
         this.items.push(item);
+        if (types[i] === 'key') keyPositions[fi] = wp.clone();
       }
+    }
+
+    // Collect interest points per floor (key, stairs, exit) for enemy spawning
+    const interestPoints: Record<number, THREE.Vector3[]> = {};
+    for (let fi = 0; fi < NUM_FLOORS; fi++) {
+      const pts: THREE.Vector3[] = [];
+      if (keyPositions[fi]) pts.push(keyPositions[fi]);
+      // Find stairs and exit cells
+      const floor = this.maze.floors[fi];
+      for (let z = 0; z < floor.height; z++) {
+        for (let x = 0; x < floor.width; x++) {
+          const c = floor.cells[z][x];
+          if (c.stairs === 'up' || c.isExit) {
+            pts.push(this.maze.cellToWorld(x, z, fi));
+          }
+        }
+      }
+      interestPoints[fi] = pts;
+    }
+
+    // Spawn enemies near interest points (key, stairs, exit)
+    const ENEMIES_PER_FLOOR = [1, 2, 4];
+    this.enemies = [];
+    for (let fi = 0; fi < NUM_FLOORS; fi++) {
+      const count = ENEMIES_PER_FLOOR[fi] ?? 1;
+      const floorPositions: THREE.Vector3[] = [];
+      for (let i = 0; i < count; i++) {
+        const enemy = new Enemy(this.scene, this.maze, this.audio);
+        enemy.setPatrolZone(i);
+        enemy.spawn(fi, floorPositions, interestPoints[fi] ?? []);
+        floorPositions.push(enemy.getPosition());
+        this.enemies.push(enemy);
+      }
+    }
+    // Wire up sibling references so enemies can separate and alert each other
+    for (const enemy of this.enemies) {
+      enemy.setSiblings(this.enemies);
     }
 
     this.flashBattery  = 100;
@@ -595,8 +616,8 @@ export class Game {
     const cellH = S / H;
     const ctx = this.minimapCtx;
     const has = this.collected[fi] ?? new Set<ItemType>();
-    const hasMap     = has.has('map');
-    const hasCompass = has.has('compass');
+    const hasMap     = has.has('map') || this.debugRevealMap;
+    const hasCompass = has.has('compass') || this.debugRevealMap;
 
     ctx.clearRect(0, 0, S, S);
     ctx.fillStyle = 'rgba(0,0,0,0.7)';
@@ -743,12 +764,17 @@ export class Game {
     noEnemyCb.addEventListener('change', () => {
       this.debugNoEnemy = noEnemyCb.checked;
       if (this.debugNoEnemy) {
-        // Hide all enemies immediately
         for (const enemy of this.enemies) {
           enemy.mesh.visible = false;
         }
         this.audio.updateProximityDrone(-1);
       }
+    });
+
+    // Reveal map + enemies toggle
+    const revealCb = document.getElementById('dbg-revealmap') as HTMLInputElement;
+    revealCb.addEventListener('change', () => {
+      this.debugRevealMap = revealCb.checked;
     });
   }
 
@@ -815,9 +841,11 @@ export class Game {
     // Reset debug state
     this.debugLight = false;
     this.debugNoEnemy = false;
+    this.debugRevealMap = false;
     this.scene.remove(this.debugAmbient);
     (document.getElementById('dbg-fullbright') as HTMLInputElement).checked = false;
     (document.getElementById('dbg-noenemy') as HTMLInputElement).checked = false;
+    (document.getElementById('dbg-revealmap') as HTMLInputElement).checked = false;
     // Clear dynamic objects (keep camera)
     this.scene.children
       .filter(c => c !== this.camera)
