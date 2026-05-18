@@ -60,7 +60,7 @@ const THEMES: FloorTheme[] = [
     hasCeiling:   false,
     hasWindows:   true,
     windowColor:  0x1a2244,
-    wallHeight:   WALL_HEIGHT,
+    wallHeight:   WALL_HEIGHT * 2,
   },
 ];
 
@@ -638,6 +638,7 @@ export class MazeRenderer {
       const group = new THREE.Group();
       const theme  = floor.theme;
       const W = floor.width, H = floor.height;
+      const wH = theme.wallHeight; // per-floor wall height (village = 2x)
       const yBase = fi * (WALL_HEIGHT + 1.0);
 
       // ── Materials (real image textures) ─────────────────────────────────
@@ -677,7 +678,7 @@ export class MazeRenderer {
       if (theme.hasCeiling) {
         const ceil = new THREE.Mesh(planeGeo.clone(), ceilMat);
         ceil.rotation.x = Math.PI / 2;
-        ceil.position.set(floorMesh.position.x, yBase + WALL_HEIGHT, floorMesh.position.z);
+        ceil.position.set(floorMesh.position.x, yBase + wH, floorMesh.position.z);
         group.add(ceil);
       }
 
@@ -699,14 +700,14 @@ export class MazeRenderer {
           // Draw N wall — check BOTH sides; skip only when both solid (hidden)
           const hasNWall = cell.walls.N || (north != null && north.walls.S);
           if (hasNWall && !(isSolid(cell) && isSolid(north))) {
-            const w = this.makeWall(wallMat, CELL_SIZE + 0.01, WALL_HEIGHT, 0.22);
-            w.position.set(wx, yBase + WALL_HEIGHT / 2, wz - CELL_SIZE / 2);
+            const w = this.makeWall(wallMat, CELL_SIZE + 0.01, wH, 0.22);
+            w.position.set(wx, yBase + wH / 2, wz - CELL_SIZE / 2);
             group.add(w);
             // Window panel on house/village outer walls
             if (windowMat && z <= 2) {
-              const wg = new THREE.PlaneGeometry(CELL_SIZE * 0.5, WALL_HEIGHT * 0.4);
+              const wg = new THREE.PlaneGeometry(CELL_SIZE * 0.5, wH * 0.4);
               const wp = new THREE.Mesh(wg, windowMat);
-              wp.position.set(wx, yBase + WALL_HEIGHT * 0.6, wz - CELL_SIZE / 2 + 0.12);
+              wp.position.set(wx, yBase + wH * 0.6, wz - CELL_SIZE / 2 + 0.12);
               group.add(wp);
             }
           }
@@ -714,14 +715,14 @@ export class MazeRenderer {
           // Draw W wall — check BOTH sides; skip only when both solid (hidden)
           const hasWWall = cell.walls.W || (west != null && west.walls.E);
           if (hasWWall && !(isSolid(cell) && isSolid(west))) {
-            const w = this.makeWall(wallMat, 0.22, WALL_HEIGHT, CELL_SIZE + 0.01);
-            w.position.set(wx - CELL_SIZE / 2, yBase + WALL_HEIGHT / 2, wz);
+            const w = this.makeWall(wallMat, 0.22, wH, CELL_SIZE + 0.01);
+            w.position.set(wx - CELL_SIZE / 2, yBase + wH / 2, wz);
             group.add(w);
             if (windowMat && x <= 2) {
-              const wg = new THREE.PlaneGeometry(CELL_SIZE * 0.5, WALL_HEIGHT * 0.4);
+              const wg = new THREE.PlaneGeometry(CELL_SIZE * 0.5, wH * 0.4);
               const wp = new THREE.Mesh(wg, windowMat);
               wp.rotation.y = Math.PI / 2;
-              wp.position.set(wx - CELL_SIZE / 2 + 0.12, yBase + WALL_HEIGHT * 0.6, wz);
+              wp.position.set(wx - CELL_SIZE / 2 + 0.12, yBase + wH * 0.6, wz);
               group.add(wp);
             }
           }
@@ -732,8 +733,8 @@ export class MazeRenderer {
             // Avoid duplicate: the N-wall pass of cell (x,z+1) may have drawn this already.
             // Draw here only for boundary or when the N pass wouldn't have caught it.
             if (z === H - 1 || (cell.walls.S && !south?.walls.N) || (!cell.walls.S && south?.walls.N)) {
-              const w = this.makeWall(wallMat, CELL_SIZE + 0.01, WALL_HEIGHT, 0.22);
-              w.position.set(wx, yBase + WALL_HEIGHT / 2, wz + CELL_SIZE / 2);
+              const w = this.makeWall(wallMat, CELL_SIZE + 0.01, wH, 0.22);
+              w.position.set(wx, yBase + wH / 2, wz + CELL_SIZE / 2);
               group.add(w);
             }
           }
@@ -741,8 +742,8 @@ export class MazeRenderer {
           const hasEWall = cell.walls.E || (east != null && east.walls.W);
           if (x === W - 1 || (hasEWall && !(isSolid(cell) && isSolid(east)))) {
             if (x === W - 1 || (cell.walls.E && !east?.walls.W) || (!cell.walls.E && east?.walls.W)) {
-              const w = this.makeWall(wallMat, 0.22, WALL_HEIGHT, CELL_SIZE + 0.01);
-              w.position.set(wx + CELL_SIZE / 2, yBase + WALL_HEIGHT / 2, wz);
+              const w = this.makeWall(wallMat, 0.22, wH, CELL_SIZE + 0.01);
+              w.position.set(wx + CELL_SIZE / 2, yBase + wH / 2, wz);
               group.add(w);
             }
           }
@@ -774,7 +775,7 @@ export class MazeRenderer {
 
       // Village: add street lanterns at intersections
       if (floor.type === 'village') {
-        this.addStreetLanterns(group, floor, fi, yBase);
+        this.addStreetLanterns(group, floor, fi, yBase, wH);
       }
 
       this.groups[fi] = group;
@@ -842,7 +843,7 @@ export class MazeRenderer {
     group.add(stairGroup);
   }
 
-  private addStreetLanterns(group: THREE.Group, floor: MazeFloor, _fi: number, yBase: number) {
+  private addStreetLanterns(group: THREE.Group, floor: MazeFloor, _fi: number, yBase: number, _wH: number) {
     const W = floor.width, H = floor.height;
     const LANTERN_STEP = Math.max(7, Math.floor(Math.max(W, H) / 20));
     for (let z = 0; z < H; z += LANTERN_STEP) {

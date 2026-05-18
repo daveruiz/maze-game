@@ -16,7 +16,7 @@ const FRICTION      = 12;     // units/s² — how fast we slow down when no inp
 
 // Stamina
 const MAX_STAMINA        = 100;
-const STAMINA_SPRINT_DRAIN = 20;  // per second while sprinting
+const STAMINA_SPRINT_DRAIN = 10;  // per second while sprinting
 const STAMINA_JUMP_COST   = 15;   // flat cost per jump
 const STAMINA_REGEN       = 12;   // per second when not sprinting
 const EXHAUSTED_THRESHOLD = 15;   // must recover to 15% before normal speed returns
@@ -194,6 +194,15 @@ export class Player {
       this.isOnGround = true;
     } else {
       this.isOnGround = false;
+    }
+
+    // Ceiling clamp — prevent jumping through ceiling on floors that have one
+    if (floor?.theme.hasCeiling) {
+      const ceilY = baseY + WALL_HEIGHT - 0.1; // small margin below ceiling plane
+      if (this.pos.y > ceilY) {
+        this.pos.y = ceilY;
+        this.verticalVelocity = 0;
+      }
     }
 
     // Wall depenetration
