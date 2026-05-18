@@ -179,9 +179,14 @@ export class Game {
       const count = ENEMIES_PER_FLOOR[fi] ?? 1;
       for (let i = 0; i < count; i++) {
         const enemy = new Enemy(this.scene, this.maze, this.audio);
+        enemy.setPatrolZone(i);
         enemy.spawn(fi);
         this.enemies.push(enemy);
       }
+    }
+    // Wire up sibling references so enemies can separate and alert each other
+    for (const enemy of this.enemies) {
+      enemy.setSiblings(this.enemies);
     }
 
     // Spawn collectible items: key + map + compass per floor
