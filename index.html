@@ -188,6 +188,87 @@
       pointer-events: none;
       letter-spacing: 2px;
     }
+    /* ── Debug menu ───────────────────────────── */
+    #debug-menu {
+      position: absolute;
+      top: 50%;
+      left: 50%;
+      transform: translate(-50%, -50%);
+      background: rgba(0, 0, 0, 0.92);
+      border: 1px solid rgba(255, 200, 60, 0.5);
+      border-radius: 6px;
+      padding: 18px 24px;
+      pointer-events: all;
+      z-index: 20;
+      display: none;
+      min-width: 240px;
+      color: #ccc;
+      font-size: 13px;
+    }
+    #debug-menu h2 {
+      margin: 0 0 14px;
+      font-size: 14px;
+      color: #e8c56d;
+      letter-spacing: 3px;
+      text-transform: uppercase;
+      text-align: center;
+      border-bottom: 1px solid rgba(255,255,255,0.15);
+      padding-bottom: 8px;
+    }
+    #debug-menu .section-label {
+      font-size: 10px;
+      color: #888;
+      letter-spacing: 2px;
+      text-transform: uppercase;
+      margin: 12px 0 6px;
+    }
+    #debug-menu .section-label:first-of-type { margin-top: 0; }
+    #debug-menu .floor-btns {
+      display: flex;
+      gap: 6px;
+    }
+    #debug-menu .floor-btns button {
+      flex: 1;
+      background: rgba(255,255,255,0.1);
+      border: 1px solid rgba(255,255,255,0.2);
+      color: #ccc;
+      padding: 6px 0;
+      font-family: 'Courier New', monospace;
+      font-size: 12px;
+      cursor: pointer;
+      border-radius: 3px;
+      transition: background 0.15s;
+    }
+    #debug-menu .floor-btns button:hover {
+      background: rgba(232, 197, 109, 0.3);
+      color: #fff;
+    }
+    #debug-menu .floor-btns button.active {
+      background: rgba(232, 197, 109, 0.5);
+      color: #fff;
+      border-color: #e8c56d;
+    }
+    #debug-menu label {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      padding: 4px 0;
+      cursor: pointer;
+    }
+    #debug-menu label:hover { color: #fff; }
+    #debug-menu input[type="checkbox"] {
+      accent-color: #e8c56d;
+      width: 14px;
+      height: 14px;
+    }
+    #debug-menu .hint {
+      font-size: 10px;
+      color: #666;
+      text-align: center;
+      margin-top: 14px;
+      border-top: 1px solid rgba(255,255,255,0.1);
+      padding-top: 8px;
+    }
   </style>
 </head>
 <body>
@@ -201,6 +282,13 @@
       <div id="enemy-status">
         <div style="font-size:0.7rem;color:#888;margin-bottom:2px;">ENTIDAD</div>
         <div id="enemy-indicator" style="color:#4af;">◉ BUSCANDO</div>
+      </div>
+      <div id="stamina-hud" style="position:absolute;bottom:54px;left:16px;display:flex;align-items:center;gap:8px;background:rgba(0,0,0,0.5);border:1px solid rgba(255,255,255,0.2);border-radius:4px;padding:6px 12px;">
+        <span style="font-size:14px;">🏃</span>
+        <div style="width:100px;height:8px;background:rgba(255,255,255,0.15);border-radius:4px;overflow:hidden;">
+          <div id="stamina-fill" style="height:100%;width:100%;background:#4f8;transition:width 0.2s,background 0.2s;border-radius:4px;"></div>
+        </div>
+        <span id="stamina-pct" style="font-size:11px;color:#aaa;min-width:30px;">100%</span>
       </div>
       <div id="battery-hud" style="position:absolute;bottom:20px;left:16px;display:flex;align-items:center;gap:8px;background:rgba(0,0,0,0.5);border:1px solid rgba(255,255,255,0.2);border-radius:4px;padding:6px 12px;">
         <span id="battery-icon" style="font-size:18px;">🔦</span>
@@ -220,12 +308,25 @@
       <canvas id="minimap" width="120" height="120"></canvas>
       <div id="key-needed"></div>
       <div id="message"></div>
+      <div id="debug-menu">
+        <h2>DEBUG</h2>
+        <div class="section-label">Saltar a planta</div>
+        <div class="floor-btns">
+          <button data-floor="0">1 — Pueblo</button>
+          <button data-floor="1">2 — Casa</button>
+          <button data-floor="2">3 — Catacumbas</button>
+        </div>
+        <div class="section-label">Opciones</div>
+        <label><input type="checkbox" id="dbg-fullbright"> Iluminación completa</label>
+        <label><input type="checkbox" id="dbg-noenemy"> Desactivar enemigos</label>
+        <div class="hint">Pulsa ` para cerrar</div>
+      </div>
     </div>
     <div id="overlay">
       <h1>MAZE</h1>
       <p style="color:#e8c56d;margin-bottom:20px;letter-spacing:2px;">RUNNER</p>
       <div class="controls-list">
-        WASD — Mover &nbsp;|&nbsp; RATÓN — Mirar &nbsp;|&nbsp; ESPACIO — Saltar &nbsp;|&nbsp; F — Linterna<br/>
+        WASD — Mover &nbsp;|&nbsp; SHIFT — Correr &nbsp;|&nbsp; ESPACIO — Saltar &nbsp;|&nbsp; F — Linterna<br/>
         Llega a la salida en la última planta<br/>
         <span style="color:#f66;">Cuidado con lo que te persigue...</span>
       </div>

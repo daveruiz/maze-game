@@ -849,18 +849,32 @@ export class MazeRenderer {
       for (let x = 0; x < W; x += LANTERN_STEP) {
         const c = floor.cells[z]?.[x];
         if (!c || isSolid(c)) continue;
+
+        const lx = x * CELL_SIZE - CELL_SIZE * 0.4;
+        const lz = z * CELL_SIZE - CELL_SIZE * 0.4;
+
         // Lantern post
         const postGeo = new THREE.CylinderGeometry(0.06, 0.08, WALL_HEIGHT * 0.8, 6);
         const postMat = new THREE.MeshLambertMaterial({ color: 0x222222 });
         const post = new THREE.Mesh(postGeo, postMat);
-        post.position.set(x * CELL_SIZE - CELL_SIZE * 0.4, yBase + WALL_HEIGHT * 0.4, z * CELL_SIZE - CELL_SIZE * 0.4);
+        post.position.set(lx, yBase + WALL_HEIGHT * 0.4, lz);
         group.add(post);
-        // Lantern head
+
+        // Lantern head (emissive so it glows visually)
         const headGeo = new THREE.BoxGeometry(0.3, 0.3, 0.3);
-        const headMat = new THREE.MeshBasicMaterial({ color: 0xffcc66 });
+        const headMat = new THREE.MeshLambertMaterial({
+          color: 0xc4b898,
+          emissive: 0xbca27f,
+          emissiveIntensity: 0.8,
+        });
         const head = new THREE.Mesh(headGeo, headMat);
-        head.position.set(post.position.x, yBase + WALL_HEIGHT * 0.82, post.position.z);
+        head.position.set(lx, yBase + WALL_HEIGHT * 0.82, lz);
         group.add(head);
+
+        // Point light — warm glow that illuminates surrounding streets
+        const light = new THREE.PointLight(0xbfa687, 45.0, 18, 1.5);
+        light.position.set(lx, yBase + WALL_HEIGHT * 0.78, lz);
+        group.add(light);
       }
     }
   }

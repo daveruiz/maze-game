@@ -38,7 +38,9 @@ export class Game {
   private flashBattery  = 100;
   private torchLight!:   THREE.PointLight; // very dim ambient torch (replaces flashlight when dead)
   private debugLight    = false;
+  private debugNoEnemy  = false;
   private debugAmbient!: THREE.AmbientLight;
+  private debugMenuOpen = false;
 
   // Floor culling
   private currentVisibleFloor = -1;
@@ -73,6 +75,8 @@ export class Game {
   private itemMapEl!:        HTMLElement;
   private itemCompassEl!:    HTMLElement;
   private keyNeededEl!:      HTMLElement;
+  private staminaFillEl!:    HTMLElement;
+  private staminaPctEl!:     HTMLElement;
 
   constructor(container: HTMLElement) {
     this.renderer = new THREE.WebGLRenderer({ antialias: true });
@@ -129,11 +133,13 @@ export class Game {
     this.itemMapEl     = document.getElementById('item-map')!;
     this.itemCompassEl = document.getElementById('item-compass')!;
     this.keyNeededEl   = document.getElementById('key-needed')!;
+    this.staminaFillEl = document.getElementById('stamina-fill')!;
+    this.staminaPctEl  = document.getElementById('stamina-pct')!;
 
     // Debug full-bright light (added to scene on demand)
     this.debugAmbient = new THREE.AmbientLight(0xffffff, 6);
 
-    // Flashlight toggle + debug lighting toggle
+    // Flashlight toggle
     document.addEventListener('keydown', e => {
       if (e.code === 'KeyF' && !e.repeat) {
         if (!this.flashlightOn && this.flashBattery < 5) return; // too low to turn on
@@ -143,17 +149,13 @@ export class Game {
         }
         this.audio.playFlashlightToggle(this.flashlightOn);
       }
-      if (e.code === 'KeyL') {
-        this.debugLight = !this.debugLight;
-        if (this.debugLight) {
-          this.scene.fog = null;
-          this.scene.add(this.debugAmbient);
-        } else {
-          this.scene.remove(this.debugAmbient);
-          this.updateFog(this.player.floorIndex);
-        }
+      // Debug menu toggle (backtick / tilde key)
+      if (e.code === 'Backquote' && !e.repeat) {
+        this.toggleDebugMenu();
       }
     });
+
+    this.setupDebugMenu();
 
     window.addEventListener('resize', this.onResize.bind(this));
   }
@@ -373,20 +375,22 @@ export class Game {
     // Enemies + proximity drone
     let nearestDist = Infinity;
     let caughtBy: Enemy | null = null;
-    for (const enemy of this.enemies) {
-      const caught = enemy.update(dt, pp, this.player.floorIndex, this.camera, this.flashlightOn);
-      if (caught && !caughtBy) {
-        caughtBy = enemy;
-      }
-      // Track nearest enemy on this floor
-      if (enemy.homeFloor === this.player.floorIndex) {
-        const d = enemy.getPosition().distanceTo(pp);
-        if (d < nearestDist) nearestDist = d;
+    if (!this.debugNoEnemy) {
+      for (const enemy of this.enemies) {
+        const caught = enemy.update(dt, pp, this.player.floorIndex, this.camera, this.flashlightOn);
+        if (caught && !caughtBy) {
+          caughtBy = enemy;
+        }
+        // Track nearest enemy on this floor
+        if (enemy.homeFloor === this.player.floorIndex) {
+          const d = enemy.getPosition().distanceTo(pp);
+          if (d < nearestDist) nearestDist = d;
+        }
       }
     }
 
     // Update proximity drone
-    this.audio.updateProximityDrone(nearestDist);
+    this.audio.updateProximityDrone(this.debugNoEnemy ? -1 : nearestDist);
 
     // Flashlight (needs nearestDist for proximity flicker)
     this.updateFlashlight(dt, t, nearestDist);
@@ -563,6 +567,13 @@ export class Game {
     this.flashStatusEl.style.color = this.flashlightOn ? '#4af' : '#888';
     this.batteryPctEl.textContent = `${Math.round(pct)}%`;
 
+    // Stamina bar
+    const stam = this.player.stamina;
+    this.staminaFillEl.style.width = `${stam}%`;
+    this.staminaFillEl.style.background =
+      stam > 50 ? '#4f8' : stam > 20 ? '#fa4' : '#f44';
+    this.staminaPctEl.textContent = `${Math.round(stam)}%`;
+
     this.updateItemsHUD();
     this.drawMinimap();
   }
@@ -572,7 +583,9 @@ export class Game {
     const floor = this.maze.floors[fi];
     const W = floor.width, H = floor.height;
     const S = 120;
-    const cellPx = S / Math.max(W, H);
+    // Use separate scale for X and Z so the full map always fits the canvas
+    const cellW = S / W;
+    const cellH = S / H;
     const ctx = this.minimapCtx;
     const has = this.collected[fi] ?? new Set<ItemType>();
     const hasMap     = has.has('map');
@@ -582,16 +595,19 @@ export class Game {
     ctx.fillStyle = 'rgba(0,0,0,0.7)';
     ctx.fillRect(0, 0, S, S);
 
+    // Minimum dot size so things are visible on large maps
+    const dotMin = Math.max(Math.min(cellW, cellH), 2);
+
     // Only draw the maze layout if we have the map
     if (hasMap) {
       for (let z = 0; z < H; z++) {
         for (let x = 0; x < W; x++) {
           const c  = floor.cells[z][x];
-          const px = x * cellPx, pz = z * cellPx;
+          const px = x * cellW, pz = z * cellH;
           const solid = c.walls.N && c.walls.S && c.walls.E && c.walls.W;
-          if (solid)      { ctx.fillStyle = '#334'; ctx.fillRect(px, pz, cellPx, cellPx); }
-          if (c.stairs === 'up') { ctx.fillStyle = '#fc4'; ctx.fillRect(px+1, pz+1, cellPx-2, cellPx-2); }
-          if (c.isExit)   { ctx.fillStyle = '#0f8'; ctx.fillRect(px+1, pz+1, cellPx-2, cellPx-2); }
+          if (solid)      { ctx.fillStyle = '#334'; ctx.fillRect(px, pz, cellW + 0.5, cellH + 0.5); }
+          if (c.stairs === 'up') { ctx.fillStyle = '#fc4'; ctx.fillRect(px, pz, Math.max(cellW, 2), Math.max(cellH, 2)); }
+          if (c.isExit)   { ctx.fillStyle = '#0f8'; ctx.fillRect(px, pz, Math.max(cellW, 2), Math.max(cellH, 2)); }
         }
       }
     }
@@ -604,15 +620,11 @@ export class Game {
         const ic = this.maze.worldToCell(item.mesh.position.x, item.mesh.position.z, fi);
         const itemColor = item.type === 'key' ? '#fc4' : item.type === 'map' ? '#4af' : '#4f8';
         ctx.fillStyle = itemColor;
-        ctx.fillRect(ic.x * cellPx, ic.z * cellPx, Math.max(cellPx, 2), Math.max(cellPx, 2));
+        ctx.fillRect(ic.x * cellW, ic.z * cellH, dotMin, dotMin);
       }
 
-      // Player position
-      const pc = this.maze.worldToCell(this.player.getPosition().x, this.player.getPosition().z, fi);
-      ctx.fillStyle = '#fff';
-      ctx.beginPath();
-      ctx.arc(pc.x * cellPx + cellPx/2, pc.z * cellPx + cellPx/2, Math.max(cellPx, 1.5), 0, Math.PI * 2);
-      ctx.fill();
+      // Player arrow (directional)
+      this.drawPlayerArrow(ctx, fi, cellW, cellH, dotMin);
 
       // Enemies
       for (const enemy of this.enemies) {
@@ -621,7 +633,7 @@ export class Game {
         const ec = this.maze.worldToCell(ep.x, ep.z, fi);
         ctx.fillStyle = enemy.state === EnemyState.CHASING ? '#f44' : '#f84';
         ctx.beginPath();
-        ctx.arc(ec.x * cellPx + cellPx/2, ec.z * cellPx + cellPx/2, Math.max(cellPx * 0.8, 1.5), 0, Math.PI * 2);
+        ctx.arc(ec.x * cellW + cellW / 2, ec.z * cellH + cellH / 2, Math.max(dotMin * 0.8, 1.5), 0, Math.PI * 2);
         ctx.fill();
       }
 
@@ -634,26 +646,57 @@ export class Game {
               const c = floor.cells[z][x];
               if (c.stairs === 'up') {
                 ctx.fillStyle = '#fc4';
-                ctx.fillRect(x * cellPx, z * cellPx, Math.max(cellPx, 2), Math.max(cellPx, 2));
+                ctx.fillRect(x * cellW, z * cellH, dotMin, dotMin);
               }
               if (c.isExit) {
                 ctx.fillStyle = '#0f8';
-                ctx.fillRect(x * cellPx, z * cellPx, Math.max(cellPx, 2), Math.max(cellPx, 2));
+                ctx.fillRect(x * cellW, z * cellH, dotMin, dotMin);
               }
             }
           }
         }
       }
     } else if (hasMap) {
-      // Has map but no compass — show layout but only player dot (no enemies/items)
-      const pc = this.maze.worldToCell(this.player.getPosition().x, this.player.getPosition().z, fi);
-      ctx.fillStyle = '#fff';
-      ctx.beginPath();
-      ctx.arc(pc.x * cellPx + cellPx/2, pc.z * cellPx + cellPx/2, Math.max(cellPx, 1.5), 0, Math.PI * 2);
-      ctx.fill();
+      // Has map but no compass — show layout but only player arrow (no enemies/items)
+      this.drawPlayerArrow(ctx, fi, cellW, cellH, dotMin);
     }
 
     // No map AND no compass = completely black minimap (just the dark background)
+  }
+
+  /** Draw a directional arrow for the player on the minimap */
+  private drawPlayerArrow(ctx: CanvasRenderingContext2D, fi: number, cellW: number, cellH: number, dotMin: number) {
+    const pc = this.maze.worldToCell(this.player.getPosition().x, this.player.getPosition().z, fi);
+    const cx = pc.x * cellW + cellW / 2;
+    const cy = pc.z * cellH + cellH / 2;
+    const yaw = this.player.getYaw();
+
+    // Arrow size scales with dot size but has a minimum
+    const arrowLen = Math.max(dotMin * 1.8, 4);
+
+    ctx.save();
+    ctx.translate(cx, cy);
+    // yaw 0 = looking toward -Z (north = up on minimap), so rotate by -yaw
+    // In minimap coords: up = -Y, and canvas rotation is clockwise.
+    // yaw=0 → arrow points up (-Y), yaw=PI/2 → arrow points left (-X)
+    // Canvas needs: angle from +X axis. Arrow pointing up = -PI/2.
+    // Final rotation = -yaw - PI/2... but simpler: just negate yaw and offset.
+    ctx.rotate(-yaw);
+
+    // Draw arrow pointing UP (toward -Y in local space = "north" = yaw 0)
+    ctx.beginPath();
+    ctx.moveTo(0, -arrowLen);           // tip
+    ctx.lineTo(-arrowLen * 0.5, arrowLen * 0.4);  // bottom-left
+    ctx.lineTo(0, arrowLen * 0.15);     // notch
+    ctx.lineTo(arrowLen * 0.5, arrowLen * 0.4);   // bottom-right
+    ctx.closePath();
+    ctx.fillStyle = '#fff';
+    ctx.fill();
+    ctx.strokeStyle = '#000';
+    ctx.lineWidth = 0.8;
+    ctx.stroke();
+
+    ctx.restore();
   }
 
   private showMessage(text: string, color: string, duration: number) {
@@ -663,11 +706,90 @@ export class Game {
     setTimeout(() => { this.messageEl.style.opacity = '0'; }, duration);
   }
 
+  // ── Debug menu ──────────────────────────────────────────────────────────
+  private setupDebugMenu() {
+    const menu = document.getElementById('debug-menu')!;
+
+    // Floor jump buttons
+    menu.querySelectorAll<HTMLButtonElement>('.floor-btns button').forEach(btn => {
+      btn.addEventListener('click', () => {
+        const fi = parseInt(btn.dataset.floor ?? '0', 10);
+        this.debugJumpToFloor(fi);
+      });
+    });
+
+    // Full-bright toggle
+    const fullbrightCb = document.getElementById('dbg-fullbright') as HTMLInputElement;
+    fullbrightCb.addEventListener('change', () => {
+      this.debugLight = fullbrightCb.checked;
+      if (this.debugLight) {
+        this.scene.fog = null;
+        this.scene.add(this.debugAmbient);
+      } else {
+        this.scene.remove(this.debugAmbient);
+        this.updateFog(this.player?.floorIndex ?? 0);
+      }
+    });
+
+    // No-enemy toggle
+    const noEnemyCb = document.getElementById('dbg-noenemy') as HTMLInputElement;
+    noEnemyCb.addEventListener('change', () => {
+      this.debugNoEnemy = noEnemyCb.checked;
+      if (this.debugNoEnemy) {
+        // Hide all enemies immediately
+        for (const enemy of this.enemies) {
+          enemy.mesh.visible = false;
+        }
+        this.audio.updateProximityDrone(-1);
+      }
+    });
+  }
+
+  private toggleDebugMenu() {
+    this.debugMenuOpen = !this.debugMenuOpen;
+    const menu = document.getElementById('debug-menu')!;
+    menu.style.display = this.debugMenuOpen ? 'block' : 'none';
+
+    // Update active floor button highlight
+    if (this.debugMenuOpen) {
+      this.updateDebugFloorButtons();
+      // Release pointer lock so we can click the menu
+      document.exitPointerLock();
+    }
+  }
+
+  private updateDebugFloorButtons() {
+    const menu = document.getElementById('debug-menu')!;
+    const fi = this.player?.floorIndex ?? 0;
+    menu.querySelectorAll<HTMLButtonElement>('.floor-btns button').forEach(btn => {
+      const bfi = parseInt(btn.dataset.floor ?? '-1', 10);
+      btn.classList.toggle('active', bfi === fi);
+    });
+  }
+
+  private debugJumpToFloor(fi: number) {
+    if (fi < 0 || fi >= NUM_FLOORS || !this.player) return;
+    // Teleport player to the entry cell of the target floor
+    const entry = this.maze.floors[fi].entryCell;
+    this.player.spawn(fi, entry.x, entry.z);
+    this.updateFog(fi);
+    this.setVisibleFloor(fi);
+    this.updateItemsHUD();
+    this.updateDebugFloorButtons();
+    // Close debug menu and re-lock pointer
+    this.debugMenuOpen = false;
+    document.getElementById('debug-menu')!.style.display = 'none';
+    this.player.requestLock();
+  }
+
   private endGame() {
     this.running = false;
     cancelAnimationFrame(this.raf);
     this.audio.stopEnemySound();
     document.exitPointerLock();
+    // Close debug menu if open
+    this.debugMenuOpen = false;
+    document.getElementById('debug-menu')!.style.display = 'none';
     setTimeout(() => {
       const overlay = document.getElementById('overlay')!;
       document.getElementById('start-btn')!.textContent = 'REINTENTAR';
@@ -683,6 +805,12 @@ export class Game {
     this.enemies = [];
     this.items.forEach(i => i.dispose(this.scene));
     this.items = [];
+    // Reset debug state
+    this.debugLight = false;
+    this.debugNoEnemy = false;
+    this.scene.remove(this.debugAmbient);
+    (document.getElementById('dbg-fullbright') as HTMLInputElement).checked = false;
+    (document.getElementById('dbg-noenemy') as HTMLInputElement).checked = false;
     // Clear dynamic objects (keep camera)
     this.scene.children
       .filter(c => c !== this.camera)

@@ -1,12 +1,25 @@
 import * as THREE from 'three';
 import { MazeGenerator, CELL_SIZE, WALL_HEIGHT, OBSTACLE_HEIGHT } from './Maze';
 
-const MOVE_SPEED    = 7.5;
+const BASE_SPEED    = 3.75;   // halved from 7.5
+const SPRINT_MULT   = 2.0;    // shift doubles speed (back to original 7.5)
+const EXHAUSTED_MULT = 0.5;   // half speed when stamina depleted
 const PLAYER_HEIGHT = 1.6;
 const PLAYER_RADIUS = 0.65;
 const GRAVITY       = -24;
 const JUMP_FORCE    = 9;
-const WALL_MARGIN   = 0.55; // min distance from any wall face
+const WALL_MARGIN   = 0.55;
+
+// Inertia
+const ACCEL         = 28;     // units/s² — how fast we reach target speed
+const FRICTION      = 12;     // units/s² — how fast we slow down when no input
+
+// Stamina
+const MAX_STAMINA        = 100;
+const STAMINA_SPRINT_DRAIN = 20;  // per second while sprinting
+const STAMINA_JUMP_COST   = 15;   // flat cost per jump
+const STAMINA_REGEN       = 12;   // per second when not sprinting
+const EXHAUSTED_THRESHOLD = 15;   // must recover to 15% before normal speed returns
 
 export class Player {
   camera: THREE.PerspectiveCamera;
@@ -19,9 +32,15 @@ export class Player {
   private locked = false;
 
   private pos: THREE.Vector3 = new THREE.Vector3();
+  private velocity: THREE.Vector3 = new THREE.Vector3(); // horizontal velocity (inertia)
   private verticalVelocity  = 0;
   private isOnGround        = true;
   private stairCooldown     = 0;
+
+  // Stamina
+  stamina   = MAX_STAMINA;
+  private exhausted = false; // true when stamina hit 0, clears at 15%
+  sprinting = false;
 
   constructor(camera: THREE.PerspectiveCamera, maze: MazeGenerator) {
     this.camera = camera;
@@ -33,8 +52,11 @@ export class Player {
     this.floorIndex = floorIndex;
     const wp = this.maze.cellToWorld(cx, cz, floorIndex);
     this.pos.set(wp.x, wp.y + PLAYER_HEIGHT, wp.z);
+    this.velocity.set(0, 0, 0);
     this.verticalVelocity = 0;
     this.isOnGround = true;
+    this.stamina = MAX_STAMINA;
+    this.exhausted = false;
     this.camera.position.copy(this.pos);
 
     // Face toward an open direction instead of a wall
@@ -52,12 +74,10 @@ export class Player {
     const cell = floor.cells[cz]?.[cx];
     if (!cell) return 0;
 
-    // Check each direction; prefer S, E, N, W
-    // yaw 0 = looking toward -Z (north), PI = +Z (south)
-    if (!cell.walls.S) return Math.PI;          // south (+Z)
-    if (!cell.walls.E) return -Math.PI / 2;     // east (+X)
-    if (!cell.walls.N) return 0;                // north (-Z)
-    if (!cell.walls.W) return Math.PI / 2;      // west (-X)
+    if (!cell.walls.S) return Math.PI;
+    if (!cell.walls.E) return -Math.PI / 2;
+    if (!cell.walls.N) return 0;
+    if (!cell.walls.W) return Math.PI / 2;
     return 0;
   }
 
@@ -67,9 +87,11 @@ export class Player {
       if (['KeyW','KeyA','KeyS','KeyD','ArrowUp','ArrowDown','ArrowLeft','ArrowRight','Space'].includes(e.code)) {
         e.preventDefault();
       }
-      if (e.code === 'Space' && this.isOnGround) {
+      if (e.code === 'Space' && this.isOnGround && this.stamina >= STAMINA_JUMP_COST * 0.5) {
         this.verticalVelocity = JUMP_FORCE;
         this.isOnGround = false;
+        this.stamina = Math.max(0, this.stamina - STAMINA_JUMP_COST);
+        if (this.stamina <= 0) this.exhausted = true;
       }
     });
     document.addEventListener('keyup', e => { this.keys[e.code] = false; });
@@ -89,20 +111,70 @@ export class Player {
   requestLock() { document.body.requestPointerLock(); }
   isLocked()    { return this.locked; }
 
+  getYaw(): number { return this.yaw; }
+
   update(dt: number): { stairsUp: boolean; stairsDown: boolean; isExit: boolean } {
     this.stairCooldown -= dt;
 
-    // Horizontal movement
+    // ── Sprint & stamina ────────────────────────────────────────────────
+    const wantSprint = !!(this.keys['ShiftLeft'] || this.keys['ShiftRight']);
+    const hasInput = !!(this.keys['KeyW'] || this.keys['KeyS'] || this.keys['KeyA'] || this.keys['KeyD']
+                      || this.keys['ArrowUp'] || this.keys['ArrowDown'] || this.keys['ArrowLeft'] || this.keys['ArrowRight']);
+    this.sprinting = wantSprint && hasInput && this.stamina > 0 && !this.exhausted;
+
+    if (this.sprinting) {
+      this.stamina = Math.max(0, this.stamina - STAMINA_SPRINT_DRAIN * dt);
+      if (this.stamina <= 0) this.exhausted = true;
+    } else {
+      this.stamina = Math.min(MAX_STAMINA, this.stamina + STAMINA_REGEN * dt);
+      if (this.exhausted && this.stamina >= EXHAUSTED_THRESHOLD) {
+        this.exhausted = false;
+      }
+    }
+
+    // ── Speed multiplier ────────────────────────────────────────────────
+    let speedMult = 1.0;
+    if (this.exhausted) speedMult = EXHAUSTED_MULT;
+    else if (this.sprinting) speedMult = SPRINT_MULT;
+
+    const targetSpeed = BASE_SPEED * speedMult;
+
+    // ── Desired direction ───────────────────────────────────────────────
     const fwd   = new THREE.Vector3(-Math.sin(this.yaw), 0, -Math.cos(this.yaw));
     const right = new THREE.Vector3( Math.cos(this.yaw), 0, -Math.sin(this.yaw));
-    const move  = new THREE.Vector3();
+    const wishDir = new THREE.Vector3();
 
-    if (this.keys['KeyW'] || this.keys['ArrowUp'])    move.add(fwd);
-    if (this.keys['KeyS'] || this.keys['ArrowDown'])   move.sub(fwd);
-    if (this.keys['KeyA'] || this.keys['ArrowLeft'])   move.sub(right);
-    if (this.keys['KeyD'] || this.keys['ArrowRight'])  move.add(right);
-    if (move.length() > 0) move.normalize().multiplyScalar(MOVE_SPEED * dt);
+    if (this.keys['KeyW'] || this.keys['ArrowUp'])    wishDir.add(fwd);
+    if (this.keys['KeyS'] || this.keys['ArrowDown'])   wishDir.sub(fwd);
+    if (this.keys['KeyA'] || this.keys['ArrowLeft'])   wishDir.sub(right);
+    if (this.keys['KeyD'] || this.keys['ArrowRight'])  wishDir.add(right);
 
+    // ── Inertia ─────────────────────────────────────────────────────────
+    if (wishDir.lengthSq() > 0) {
+      wishDir.normalize();
+      const wishVel = wishDir.multiplyScalar(targetSpeed);
+      // Accelerate toward desired velocity
+      const diff = wishVel.clone().sub(this.velocity);
+      const accelAmount = ACCEL * dt;
+      if (diff.length() <= accelAmount) {
+        this.velocity.copy(wishVel);
+      } else {
+        this.velocity.add(diff.normalize().multiplyScalar(accelAmount));
+      }
+    } else {
+      // No input — apply friction to slow down
+      const speed = this.velocity.length();
+      if (speed > 0.01) {
+        const drop = FRICTION * dt;
+        const newSpeed = Math.max(0, speed - drop);
+        this.velocity.multiplyScalar(newSpeed / speed);
+      } else {
+        this.velocity.set(0, 0, 0);
+      }
+    }
+
+    // Apply horizontal velocity
+    const move = this.velocity.clone().multiplyScalar(dt);
     this.tryMove(move.x, 0);
     this.tryMove(0, move.z);
 
@@ -124,7 +196,7 @@ export class Player {
       this.isOnGround = false;
     }
 
-    // Wall depenetration — push away from any wall faces that are too close
+    // Wall depenetration
     this.enforceWallMargin();
 
     // Camera
@@ -142,13 +214,6 @@ export class Player {
     return { stairsUp, stairsDown: false, isExit };
   }
 
-  /**
-   * Push player away from any wall face that is too close.
-   * Each wall is a line segment: N/S walls span the cell's X extent,
-   * W/E walls span the cell's Z extent. We only apply the push when the
-   * player is within that extent — otherwise walls from neighbouring cells
-   * would incorrectly block movement through valid corridors.
-   */
   private enforceWallMargin() {
     const floor = this.maze.floors[this.floorIndex];
     if (!floor) return;
@@ -167,9 +232,7 @@ export class Player {
         const wz = nz * CELL_SIZE;
         const half = CELL_SIZE / 2;
 
-        // N/S walls are horizontal — only relevant when player X is within cell X extent
         const inX = this.pos.x >= wx - half && this.pos.x <= wx + half;
-        // W/E walls are vertical — only relevant when player Z is within cell Z extent
         const inZ = this.pos.z >= wz - half && this.pos.z <= wz + half;
 
         if (c.walls.N && inX) this.pushZ(wz - half);
@@ -199,6 +262,10 @@ export class Player {
     if (this.canPass(nx / CELL_SIZE, nz / CELL_SIZE, floor)) {
       this.pos.x = nx;
       this.pos.z = nz;
+    } else {
+      // Kill velocity component on collision so inertia doesn't keep pushing into wall
+      if (dx !== 0) this.velocity.x = 0;
+      if (dz !== 0) this.velocity.z = 0;
     }
   }
 
@@ -213,7 +280,6 @@ export class Player {
       const fx = fxPrev + (fxNew - fxPrev) * t;
       const fz = fzPrev + (fzNew - fzPrev) * t;
 
-      // Check all probe points for walls and solid cells
       for (const [ox, oz] of [[0,0],[PLAYER_RADIUS/CELL_SIZE,0],[-PLAYER_RADIUS/CELL_SIZE,0],[0,PLAYER_RADIUS/CELL_SIZE],[0,-PLAYER_RADIUS/CELL_SIZE]]) {
         const cx = Math.round(fx + ox), cz = Math.round(fz + oz);
         if (cx < 0 || cx >= floor.width || cz < 0 || cz >= floor.height) return false;
@@ -222,7 +288,6 @@ export class Player {
         if (cell.walls.N && cell.walls.S && cell.walls.E && cell.walls.W) return false;
       }
 
-      // Obstacle check only against the CENTER cell — prevents getting stuck on edges
       const ccx = Math.round(fx), ccz = Math.round(fz);
       const centerCell = floor.cells[ccz]?.[ccx];
       if (centerCell?.hasObstacle && this.pos.y < baseY + OBSTACLE_HEIGHT + PLAYER_HEIGHT - 0.1) return false;
@@ -244,6 +309,7 @@ export class Player {
     const cx = entryX ?? entry.x, cz = entryZ ?? entry.z;
     const wp = this.maze.cellToWorld(cx, cz, this.floorIndex);
     this.pos.set(wp.x, wp.y + PLAYER_HEIGHT + 0.5, wp.z);
+    this.velocity.set(0, 0, 0);
     this.verticalVelocity = 0;
     this.yaw = this.findOpenYaw(cx, cz, this.floorIndex);
     this.pitch = 0;
@@ -258,6 +324,7 @@ export class Player {
     const entry = this.maze.floors[this.floorIndex].entryCell;
     const wp = this.maze.cellToWorld(entry.x, entry.z, this.floorIndex);
     this.pos.set(wp.x, wp.y + PLAYER_HEIGHT + 0.5, wp.z);
+    this.velocity.set(0, 0, 0);
     this.verticalVelocity = 0;
     this.yaw = this.findOpenYaw(entry.x, entry.z, this.floorIndex);
     this.pitch = 0;
