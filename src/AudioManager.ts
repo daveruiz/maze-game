@@ -219,6 +219,9 @@ export class AudioManager {
 
     // Load MP3s
     this.loadMp3Buffers();
+
+    // Start proximity tension drone (silent until enemies are near)
+    this.initDrone();
   }
 
   private async loadMp3Buffers() {
@@ -324,6 +327,59 @@ export class AudioManager {
     return buf;
   }
 
+  // ── Proximity tension drone (non-positional, always running) ─────────────
+
+  private droneSource: AudioBufferSourceNode | null = null;
+  private droneGain: GainNode | null = null;
+  private droneTarget = 0;
+  private droneCurrent = 0;
+
+  private initDrone() {
+    if (!this.ctx) return;
+    const sr = this.ctx.sampleRate;
+    const dur = 6.0;
+    const buf = this.ctx.createBuffer(1, sr * dur, sr);
+    const data = buf.getChannelData(0);
+    for (let i = 0; i < data.length; i++) {
+      const t = i / sr;
+      // Layered sub-bass + rumble + dissonant overtone
+      const sub     = Math.sin(2 * Math.PI * 32 * t) * 0.4;
+      const rumble  = Math.sin(2 * Math.PI * 48 * t + Math.sin(t * 2.0) * 3.0) * 0.3;
+      const grind   = Math.sin(2 * Math.PI * 73 * t) * 0.15;
+      const noise   = (Math.random() - 0.5) * 0.08;
+      const lfo     = 0.7 + 0.3 * Math.sin(2 * Math.PI * 0.25 * t);
+      data[i] = (sub + rumble + grind + noise) * lfo;
+    }
+
+    const src = this.ctx.createBufferSource();
+    src.buffer = buf;
+    src.loop = true;
+    const g = this.ctx.createGain();
+    g.gain.value = 0;
+    src.connect(g).connect(this.masterGain);
+    src.start();
+    this.droneSource = src;
+    this.droneGain = g;
+  }
+
+  /** Call every frame with distance to nearest enemy on current floor */
+  updateProximityDrone(nearestDist: number) {
+    if (!this.droneGain) return;
+    const MAX_DIST = 18;
+    const MIN_DIST = 3;
+    if (nearestDist > MAX_DIST || nearestDist < 0) {
+      this.droneTarget = 0;
+      // Immediate silence when explicitly killed (negative dist)
+      if (nearestDist < 0) { this.droneCurrent = 0; this.droneGain.gain.value = 0; return; }
+    } else {
+      const t = 1.0 - Math.max(0, Math.min(1, (nearestDist - MIN_DIST) / (MAX_DIST - MIN_DIST)));
+      this.droneTarget = t * t * 0.7; // quadratic ramp, max 0.7
+    }
+    // Smooth toward target
+    this.droneCurrent += (this.droneTarget - this.droneCurrent) * 0.05;
+    this.droneGain.gain.value = this.droneCurrent;
+  }
+
   // ── Flashlight click (non-positional) ───────────────────────────────────
 
   playFlashlightToggle(on: boolean) {
@@ -342,13 +398,79 @@ export class AudioManager {
     const src = this.ctx.createBufferSource();
     src.buffer = buf;
     const g = this.ctx.createGain();
-    g.gain.value = 0.5;
+    g.gain.value = 0.03;  // ~5% volume
+    src.connect(g).connect(this.masterGain);
+    src.start();
+  }
+
+  // ── Electrical flicker buzz (non-positional, looping) ────────────────────
+
+  private flickerSource: AudioBufferSourceNode | null = null;
+  private flickerGain: GainNode | null = null;
+
+  /** Start or update the electrical buzz volume (0 = silent, 1 = full) */
+  updateFlickerBuzz(intensity: number) {
+    if (!this.ctx) return;
+
+    // Lazy init — create the looping buzz on first call
+    if (!this.flickerSource) {
+      const sr = this.ctx.sampleRate;
+      const dur = 0.5;
+      const buf = this.ctx.createBuffer(1, sr * dur, sr);
+      const data = buf.getChannelData(0);
+      for (let i = 0; i < data.length; i++) {
+        const t = i / sr;
+        // 50/60Hz electrical hum + harmonics + crackle
+        const hum = Math.sin(2 * Math.PI * 60 * t) * 0.3
+                  + Math.sin(2 * Math.PI * 120 * t) * 0.25
+                  + Math.sin(2 * Math.PI * 180 * t) * 0.15;
+        const crackle = (Math.random() - 0.5) * 0.3;
+        // Random pops
+        const pop = Math.random() > 0.97 ? (Math.random() - 0.5) * 0.8 : 0;
+        data[i] = hum + crackle + pop;
+      }
+      const src = this.ctx.createBufferSource();
+      src.buffer = buf;
+      src.loop = true;
+      const g = this.ctx.createGain();
+      g.gain.value = 0;
+      src.connect(g).connect(this.masterGain);
+      src.start();
+      this.flickerSource = src;
+      this.flickerGain = g;
+    }
+
+    this.flickerGain!.gain.value = intensity * 0.15; // max 15% volume at full flicker
+  }
+
+  /** Short percussive pickup thud */
+  playPickupSound() {
+    if (!this.ctx) return;
+    const sr = this.ctx.sampleRate;
+    const dur = 0.12;
+    const buf = this.ctx.createBuffer(1, sr * dur, sr);
+    const data = buf.getChannelData(0);
+    for (let i = 0; i < data.length; i++) {
+      const t = i / sr;
+      // Fast exponential decay
+      const env = Math.exp(-t * 40);
+      // Low thump + noise burst
+      const thump = Math.sin(2 * Math.PI * 120 * t * Math.exp(-t * 15));
+      const snap = (Math.random() - 0.5) * Math.exp(-t * 60);
+      data[i] = (thump * 0.6 + snap * 0.4) * env;
+    }
+    const src = this.ctx.createBufferSource();
+    src.buffer = buf;
+    const g = this.ctx.createGain();
+    g.gain.value = 0.12;  // 20% volume
     src.connect(g).connect(this.masterGain);
     src.start();
   }
 
   dispose() {
     this.stopEnemySound();
+    if (this.droneSource) { try { this.droneSource.stop(); } catch {} this.droneSource = null; }
+    if (this.flickerSource) { try { this.flickerSource.stop(); } catch {} this.flickerSource = null; }
     this.ctx?.close();
   }
 }

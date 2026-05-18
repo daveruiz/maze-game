@@ -36,6 +36,29 @@ export class Player {
     this.verticalVelocity = 0;
     this.isOnGround = true;
     this.camera.position.copy(this.pos);
+
+    // Face toward an open direction instead of a wall
+    this.yaw = this.findOpenYaw(cx, cz, floorIndex);
+    this.pitch = 0;
+    this.camera.rotation.order = 'YXZ';
+    this.camera.rotation.y = this.yaw;
+    this.camera.rotation.x = 0;
+  }
+
+  /** Find a yaw angle pointing toward an open neighbor cell */
+  private findOpenYaw(cx: number, cz: number, fi: number): number {
+    const floor = this.maze.floors[fi];
+    if (!floor) return 0;
+    const cell = floor.cells[cz]?.[cx];
+    if (!cell) return 0;
+
+    // Check each direction; prefer S, E, N, W
+    // yaw 0 = looking toward -Z (north), PI = +Z (south)
+    if (!cell.walls.S) return Math.PI;          // south (+Z)
+    if (!cell.walls.E) return -Math.PI / 2;     // east (+X)
+    if (!cell.walls.N) return 0;                // north (-Z)
+    if (!cell.walls.W) return Math.PI / 2;      // west (-X)
+    return 0;
   }
 
   private setupInput() {
@@ -222,6 +245,10 @@ export class Player {
     const wp = this.maze.cellToWorld(cx, cz, this.floorIndex);
     this.pos.set(wp.x, wp.y + PLAYER_HEIGHT + 0.5, wp.z);
     this.verticalVelocity = 0;
+    this.yaw = this.findOpenYaw(cx, cz, this.floorIndex);
+    this.pitch = 0;
+    this.camera.rotation.y = this.yaw;
+    this.camera.rotation.x = 0;
   }
 
   goDownFloor() {
@@ -232,5 +259,9 @@ export class Player {
     const wp = this.maze.cellToWorld(entry.x, entry.z, this.floorIndex);
     this.pos.set(wp.x, wp.y + PLAYER_HEIGHT + 0.5, wp.z);
     this.verticalVelocity = 0;
+    this.yaw = this.findOpenYaw(entry.x, entry.z, this.floorIndex);
+    this.pitch = 0;
+    this.camera.rotation.y = this.yaw;
+    this.camera.rotation.x = 0;
   }
 }

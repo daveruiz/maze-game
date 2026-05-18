@@ -69,6 +69,8 @@ export class Enemy {
     this.mat = new THREE.MeshLambertMaterial({
       map: this.texFront,
       color: 0x666666,       // dark tint — barely visible without direct light
+      emissive: 0xffffff,
+      emissiveIntensity: 0.03, // 3% self-illumination
       transparent: true,
       alphaTest: 0.05,
       depthWrite: false,

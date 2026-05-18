@@ -54,7 +54,7 @@ const THEMES: FloorTheme[] = [
     floorColor:   0x38342a,
     ceilColor:    0x000000,
     fogColor:     0x04060a,
-    fogDensity:   0.018,
+    fogDensity:   0.035,
     ambientColor: 0x050810,
     lightColor:   0x4466aa,
     hasCeiling:   false,
@@ -565,6 +565,31 @@ export class MazeGenerator {
   worldToCell(wx: number, wz: number, _fi: number): { x: number; z: number } {
     return { x: Math.round(wx / CELL_SIZE), z: Math.round(wz / CELL_SIZE) };
   }
+
+  /** Get N well-spaced reachable cells for item placement on a floor (avoids stairs, exit, entry) */
+  getItemCells(floorIdx: number, count: number): Cell[] {
+    const floor = this.floors[floorIdx];
+    const reachable = this.floodFill(floorIdx, floor.entryCell.x, floor.entryCell.z);
+    const candidates = reachable.filter(c =>
+      !c.stairs && !c.isExit && !c.hasObstacle &&
+      !(c.x <= 3 && c.z <= 3) // not near spawn
+    );
+    // Sort by distance from entry, pick spread-out cells
+    const ex = floor.entryCell.x, ez = floor.entryCell.z;
+    candidates.sort((a, b) => {
+      const dA = Math.abs(a.x - ex) + Math.abs(a.z - ez);
+      const dB = Math.abs(b.x - ex) + Math.abs(b.z - ez);
+      return dB - dA; // farthest first
+    });
+    // Pick from different distance bands for spread
+    const result: Cell[] = [];
+    const bandSize = Math.max(1, Math.floor(candidates.length / count));
+    for (let i = 0; i < count && i * bandSize < candidates.length; i++) {
+      const band = candidates.slice(i * bandSize, (i + 1) * bandSize);
+      result.push(band[Math.floor(Math.random() * band.length)]);
+    }
+    return result;
+  }
 }
 
 // ─── Renderer ──────────────────────────────────────────────────────────────
@@ -577,6 +602,8 @@ export class MazeRenderer {
   private groups: THREE.Group[] = [];
   private exitMesh: THREE.Mesh | null = null;
   private stairMeshes: THREE.Mesh[] = [];
+  /** Lights belonging to each floor (for culling) */
+  floorLights: THREE.Light[][] = [];
 
   build(maze: MazeGenerator, scene: THREE.Scene): void {
     maze.floors.forEach((floor, fi) => {
@@ -815,6 +842,15 @@ export class MazeRenderer {
     m.castShadow = true;
     m.receiveShadow = true;
     return m;
+  }
+
+  /** Show only the given floor, hide all others */
+  setFloorVisible(activeFloor: number) {
+    this.groups.forEach((g, i) => { g.visible = (i === activeFloor); });
+    this.floorLights.forEach((lights, i) => {
+      const vis = (i === activeFloor);
+      lights.forEach(l => { l.visible = vis; });
+    });
   }
 
   update(t: number) {

@@ -5,6 +5,7 @@ import { ShaderPass } from 'three/examples/jsm/postprocessing/ShaderPass.js';
 import { MazeGenerator, MazeRenderer, WALL_HEIGHT, CELL_SIZE } from './Maze';
 import { Player } from './Player';
 import { Enemy } from './Enemy';
+import { Item, ItemType } from './Item';
 import { AudioManager } from './AudioManager';
 import { EnemyState } from './types';
 import { HorrorShader } from './HorrorShader';
@@ -12,7 +13,7 @@ import { HorrorShader } from './HorrorShader';
 const NUM_FLOORS = 3;
 
 // Flashlight drain/recharge rates (% per second)
-const FLASHLIGHT_DRAIN   = 10;
+const FLASHLIGHT_DRAIN   = 5;
 const FLASHLIGHT_CHARGE  = 5;
 
 export class Game {
@@ -39,6 +40,24 @@ export class Game {
   private debugLight    = false;
   private debugAmbient!: THREE.AmbientLight;
 
+  // Floor culling
+  private currentVisibleFloor = -1;
+  /** Per-floor lights (for culling) */
+  private floorLights: THREE.Light[][] = [];
+  private globalLights: THREE.Light[] = [];  // lights that are always visible
+
+  // Death animation
+  private dying = false;
+  private deathTimer = 0;
+  private deathEnemy: Enemy | null = null;
+  private deathYaw = 0;
+  private deathPitch = 0;
+
+  // Items
+  private items: Item[] = [];
+  /** Per-floor collected items */
+  private collected: Record<number, Set<ItemType>> = {};
+
   // HUD
   private minimapCtx:        CanvasRenderingContext2D;
   private minimapCanvas:     HTMLCanvasElement;
@@ -50,6 +69,10 @@ export class Game {
   private batteryIconEl!:    HTMLElement;
   private flashStatusEl!:    HTMLElement;
   private batteryPctEl!:     HTMLElement;
+  private itemKeyEl!:        HTMLElement;
+  private itemMapEl!:        HTMLElement;
+  private itemCompassEl!:    HTMLElement;
+  private keyNeededEl!:      HTMLElement;
 
   constructor(container: HTMLElement) {
     this.renderer = new THREE.WebGLRenderer({ antialias: true });
@@ -59,21 +82,21 @@ export class Game {
     container.appendChild(this.renderer.domElement);
 
     // Camera
-    this.camera = new THREE.PerspectiveCamera(75, window.innerWidth / window.innerHeight, 0.05, 800);
+    this.camera = new THREE.PerspectiveCamera(75, window.innerWidth / window.innerHeight, 0.05, 200);
 
     // Scene — camera must be added for spotlight target to work
     this.scene = new THREE.Scene();
     this.scene.add(this.camera);
 
     // Flashlight (SpotLight on camera)
-    this.flashlight = new THREE.SpotLight(0xffffff, 20.0, 80, Math.PI / 4, 0.4, 1.2);
+    this.flashlight = new THREE.SpotLight(0xffffff, 28.0, 140, Math.PI / 4, 0.4, 1.0);
     this.flashlight.position.set(0, -0.15, 0);
     this.flashlight.target.position.set(0, -0.1, -1);
     this.camera.add(this.flashlight);
     this.camera.add(this.flashlight.target);
 
     // Dim torch glow (always on, mimics ambient bounce near player)
-    this.torchLight = new THREE.PointLight(0xff6622, 0.9, 7);
+    this.torchLight = new THREE.PointLight(0xc4a68a, 1.2, 10);  // desaturated warm (70% less saturation)
     this.torchLight.position.set(0, -0.3, -0.4);
     this.camera.add(this.torchLight);
 
@@ -102,13 +125,22 @@ export class Game {
     this.minimapCanvas = document.getElementById('minimap') as HTMLCanvasElement;
     this.minimapCtx    = this.minimapCanvas.getContext('2d')!;
 
+    this.itemKeyEl     = document.getElementById('item-key')!;
+    this.itemMapEl     = document.getElementById('item-map')!;
+    this.itemCompassEl = document.getElementById('item-compass')!;
+    this.keyNeededEl   = document.getElementById('key-needed')!;
+
     // Debug full-bright light (added to scene on demand)
     this.debugAmbient = new THREE.AmbientLight(0xffffff, 6);
 
     // Flashlight toggle + debug lighting toggle
     document.addEventListener('keydown', e => {
-      if (e.code === 'KeyF') {
+      if (e.code === 'KeyF' && !e.repeat) {
+        if (!this.flashlightOn && this.flashBattery < 5) return; // too low to turn on
         this.flashlightOn = !this.flashlightOn;
+        if (this.flashlightOn) {
+          this.flashBattery = Math.max(0, this.flashBattery - 1); // 1% drain penalty on toggle
+        }
         this.audio.playFlashlightToggle(this.flashlightOn);
       }
       if (e.code === 'KeyL') {
@@ -150,8 +182,33 @@ export class Game {
       }
     }
 
+    // Spawn collectible items: key + map + compass per floor
+    this.items = [];
+    this.collected = {};
+    for (let fi = 0; fi < NUM_FLOORS; fi++) {
+      this.collected[fi] = new Set();
+      const itemCells = this.maze.getItemCells(fi, 3);
+      const types: ItemType[] = ['key', 'map', 'compass'];
+      for (let i = 0; i < types.length && i < itemCells.length; i++) {
+        const cell = itemCells[i];
+        const wp = this.maze.cellToWorld(cell.x, cell.z, fi);
+        const item = new Item(this.scene, types[i], wp, fi);
+        this.items.push(item);
+      }
+    }
+
     this.flashBattery  = 100;
     this.flashlightOn  = true;
+
+    // Floor culling — show only floor 0 at start
+    this.currentVisibleFloor = -1;
+    this.setVisibleFloor(0);
+
+    // Reset death state
+    this.dying = false;
+    this.deathTimer = 0;
+    this.deathEnemy = null;
+    this.horrorPass.uniforms['vhsIntensity'].value = 0;
 
     this.hudEl.style.display = 'block';
     this.player.requestLock();
@@ -164,38 +221,51 @@ export class Game {
   private buildLights() {
     this.lights.forEach(l => this.scene.remove(l));
     this.lights = [];
+    this.floorLights = [];
+    this.globalLights = [];
 
     // Global fill — ensures nothing is ever pitch black
-    const ambient = new THREE.AmbientLight(0x444444, 5.0);
+    const ambient = new THREE.AmbientLight(0x555555, 7.0);
     this.scene.add(ambient);
     this.lights.push(ambient);
+    this.globalLights.push(ambient);
 
     this.maze.floors.forEach((floor, fi) => {
+      const flLights: THREE.Light[] = [];
       const yMid = fi * (WALL_HEIGHT + 1.0) + WALL_HEIGHT / 2;
       const theme = floor.theme;
 
+      // Floor 0 = full brightness, floors 1+ = half
+      const brightScale = fi === 0 ? 1.0 : 0.5;
+
       // Hemisphere (sky/ground) per floor
-      const hemi = new THREE.HemisphereLight(theme.ambientColor, 0x000000, 3.0);
+      const hemi = new THREE.HemisphereLight(theme.ambientColor, 0x000000, 3.0 * brightScale);
       hemi.position.y = yMid;
       this.scene.add(hemi);
       this.lights.push(hemi);
+      flLights.push(hemi);
 
       // Sparse point lights spread across floor — scale with map size
       const W = floor.width, H = floor.height;
-      const GRID = floor.type === 'village' ? 20 : floor.type === 'house' ? 10 : 6;
+      const GRID = floor.type === 'village' ? 12 : floor.type === 'house' ? 6 : 4;
       const countX = Math.max(2, Math.floor(W / GRID));
       const countZ = Math.max(2, Math.floor(H / GRID));
       for (let iz = 0; iz < countZ; iz++) {
         for (let ix = 0; ix < countX; ix++) {
           const lx = Math.floor((ix + 0.5) * W / countX) * CELL_SIZE;
           const lz = Math.floor((iz + 0.5) * H / countZ) * CELL_SIZE;
-          const light = new THREE.PointLight(theme.lightColor, 3.0, 40);
+          const light = new THREE.PointLight(theme.lightColor, 4.5 * brightScale, 50);
           light.position.set(lx, yMid + 0.3, lz);
           this.scene.add(light);
           this.lights.push(light);
+          flLights.push(light);
         }
       }
+      this.floorLights[fi] = flLights;
     });
+
+    // Pass floor lights to maze renderer too
+    this.mazeRenderer.floorLights = this.floorLights;
 
     this.updateFog(0);
   }
@@ -204,6 +274,10 @@ export class Game {
     const theme = this.maze.floors[floorIdx].theme;
     this.scene.fog = new THREE.FogExp2(theme.fogColor, theme.fogDensity);
     this.renderer.setClearColor(theme.hasCeiling ? theme.fogColor : 0x01020a);
+
+    // Scale global ambient per floor — floors 2/3 have brighter materials so need less fill
+    const ambientScale = floorIdx === 0 ? 7.0 : 3.0;
+    if (this.globalLights[0]) (this.globalLights[0] as THREE.AmbientLight).intensity = ambientScale;
   }
 
   private loop = () => {
@@ -212,32 +286,115 @@ export class Game {
     const dt = Math.min(this.clock.getDelta(), 0.05);
     const t  = this.clock.getElapsedTime();
 
-    // Flashlight battery
-    this.updateFlashlight(dt);
+    // ── Death animation ──────────────────────────────────────────────────
+    if (this.dying) {
+      this.deathTimer += dt;
+      // VHS ramp: 0→1 over 2 seconds
+      const vhs = Math.min(1.0, this.deathTimer / 2.0);
+      this.horrorPass.uniforms['vhsIntensity'].value = vhs;
 
-    // Player
-    const { stairsUp, isExit } = this.player.update(dt);
-    if (stairsUp) { this.player.goUpFloor(); this.updateFog(this.player.floorIndex); }
+      // Rotate camera to face the enemy that caught us
+      if (this.deathEnemy) {
+        const ep = this.deathEnemy.getPosition();
+        const pp = this.player.getPosition();
+        const dx = ep.x - pp.x, dz = ep.z - pp.z;
+        const targetYaw = Math.atan2(-dx, -dz);
+        const dy = ep.y - pp.y;
+        const hDist = Math.sqrt(dx * dx + dz * dz);
+        const targetPitch = Math.atan2(dy, hDist);
 
-    if (isExit && this.player.floorIndex === NUM_FLOORS - 1) {
-      this.showMessage('¡ESCAPASTE!', '#0f8', 4000);
-      this.endGame();
+        // Smoothly rotate toward enemy
+        const lerpSpeed = 3.0 * dt;
+        // Shortest rotation path for yaw
+        let yawDiff = targetYaw - this.deathYaw;
+        if (yawDiff > Math.PI) yawDiff -= 2 * Math.PI;
+        if (yawDiff < -Math.PI) yawDiff += 2 * Math.PI;
+        this.deathYaw += yawDiff * lerpSpeed;
+        this.deathPitch += (targetPitch - this.deathPitch) * lerpSpeed;
+
+        this.camera.rotation.order = 'YXZ';
+        this.camera.rotation.y = this.deathYaw;
+        this.camera.rotation.x = this.deathPitch;
+      }
+
+      this.horrorPass.uniforms['time'].value = t;
+      this.composer.render();
+
+      if (this.deathTimer >= 2.5) {
+        this.dying = false;
+        this.horrorPass.uniforms['vhsIntensity'].value = 0;
+        this.endGame();
+      }
       return;
     }
 
-    // Audio listener
+    // Player
+    const { stairsUp, isExit } = this.player.update(dt);
+    const fi = this.player.floorIndex;
     const pp  = this.player.getPosition();
     const fwd = this.player.getForwardDirection();
-    this.audio.setListenerPose(pp.x, pp.y, pp.z, fwd.x, fwd.y, fwd.z);
+    const hasKey = this.collected[fi]?.has('key');
 
-    // Enemies
-    for (const enemy of this.enemies) {
-      const caught = enemy.update(dt, pp, this.player.floorIndex, this.camera, this.flashlightOn);
-      if (caught) {
-        this.showMessage('TE ATRAPÓ...', '#f44', 4000);
+    if (stairsUp) {
+      if (hasKey) {
+        this.player.goUpFloor();
+        this.updateFog(this.player.floorIndex);
+        this.setVisibleFloor(this.player.floorIndex);
+      } else {
+        this.showKeyNeeded();
+      }
+    }
+
+    if (isExit && fi === NUM_FLOORS - 1) {
+      if (hasKey) {
+        this.showMessage('¡ESCAPASTE!', '#0f8', 4000);
         this.endGame();
         return;
+      } else {
+        this.showKeyNeeded();
       }
+    }
+
+    // Items
+    for (const item of this.items) {
+      const justCollected = item.update(t, pp, fi, this.camera);
+      if (justCollected) {
+        this.collected[fi].add(item.type);
+        this.onItemCollected(item.type);
+      }
+    }
+
+    // Floor culling — only render the active floor
+    this.setVisibleFloor(this.player.floorIndex);
+
+    // Audio listener
+    this.audio.setListenerPose(pp.x, pp.y, pp.z, fwd.x, fwd.y, fwd.z);
+
+    // Enemies + proximity drone
+    let nearestDist = Infinity;
+    let caughtBy: Enemy | null = null;
+    for (const enemy of this.enemies) {
+      const caught = enemy.update(dt, pp, this.player.floorIndex, this.camera, this.flashlightOn);
+      if (caught && !caughtBy) {
+        caughtBy = enemy;
+      }
+      // Track nearest enemy on this floor
+      if (enemy.homeFloor === this.player.floorIndex) {
+        const d = enemy.getPosition().distanceTo(pp);
+        if (d < nearestDist) nearestDist = d;
+      }
+    }
+
+    // Update proximity drone
+    this.audio.updateProximityDrone(nearestDist);
+
+    // Flashlight (needs nearestDist for proximity flicker)
+    this.updateFlashlight(dt, t, nearestDist);
+
+    if (caughtBy) {
+      this.showMessage('TE ATRAPÓ...', '#f44', 4000);
+      this.startDeathAnimation(caughtBy);
+      return;
     }
 
     this.updateHUD(t);
@@ -246,15 +403,132 @@ export class Game {
     this.composer.render();
   };
 
-  private updateFlashlight(dt: number) {
+  private setVisibleFloor(fi: number) {
+    if (fi === this.currentVisibleFloor) return;
+    this.currentVisibleFloor = fi;
+    this.mazeRenderer.setFloorVisible(fi);
+  }
+
+  private startDeathAnimation(enemy: Enemy) {
+    this.dying = true;
+    this.deathTimer = 0;
+    this.deathEnemy = enemy;
+    // Capture current camera rotation as starting point
+    this.deathYaw = this.camera.rotation.y;
+    this.deathPitch = this.camera.rotation.x;
+    // Stop player movement & enemy updates by letting the death branch handle rendering
+    this.audio.stopEnemySound();
+    this.audio.updateProximityDrone(-1);
+  }
+
+  private flickerState = true;
+  private nextFlickerEvent = 0;   // when the next flicker burst starts
+  private flickerBurstEnd = 0;    // when current burst ends
+  private flickerBurstOn = true;  // is light on during current burst frame
+  private flickerSubTimer = 0;    // rapid on/off within a burst
+
+  private updateFlashlight(dt: number, _t: number, nearestDist: number) {
+    // Drain / recharge
     if (this.flashlightOn && this.flashBattery > 0) {
       this.flashBattery = Math.max(0, this.flashBattery - FLASHLIGHT_DRAIN * dt);
       if (this.flashBattery === 0) this.flashlightOn = false;
     } else if (!this.flashlightOn) {
       this.flashBattery = Math.min(100, this.flashBattery + FLASHLIGHT_CHARGE * dt);
     }
-    this.flashlight.intensity = this.flashlightOn ? 20.0 * (this.flashBattery / 100) : 0;
-    this.torchLight.intensity = this.flashlightOn ? 0.6 : 1.4;
+
+    if (!this.flashlightOn) {
+      this.flashlight.intensity = 0;
+      this.torchLight.intensity = 1.4;
+      this.audio.updateFlickerBuzz(0);
+      return;
+    }
+
+    // ── Flicker probability ──────────────────────────────────────────────
+    // batteryFlicker: 0 above 35%, ramps to 1 at 0%
+    const batteryFlicker = this.flashBattery < 15
+      ? 1.0 - (this.flashBattery / 15)
+      : 0;
+
+    // proximityFlicker: 0 beyond 15 units, ramps to 1 at 3 units
+    const PROX_MAX = 15, PROX_MIN = 3;
+    const proximityFlicker = nearestDist < PROX_MAX
+      ? Math.pow(1.0 - Math.max(0, Math.min(1, (nearestDist - PROX_MIN) / (PROX_MAX - PROX_MIN))), 2)
+      : 0;
+
+    const flickerIntensity = Math.min(1, batteryFlicker + proximityFlicker);
+
+    const now = performance.now() / 1000;
+    let lightOn = true;
+
+    if (flickerIntensity > 0.01) {
+      // Schedule random flicker bursts
+      if (now >= this.nextFlickerEvent && now >= this.flickerBurstEnd) {
+        // Random gap between bursts: shorter when intensity is high
+        const minGap = 0.3 / (flickerIntensity + 0.1);
+        const maxGap = 3.0 / (flickerIntensity + 0.1);
+        const gap = minGap + Math.random() * (maxGap - minGap);
+        this.nextFlickerEvent = now + gap;
+      }
+
+      if (now >= this.nextFlickerEvent && now >= this.flickerBurstEnd) {
+        // Start a new burst — random duration
+        const burstLen = 0.05 + Math.random() * 0.3 * flickerIntensity;
+        this.flickerBurstEnd = now + burstLen;
+        this.flickerSubTimer = 0;
+        this.nextFlickerEvent = Infinity; // wait until burst ends
+      }
+
+      if (now < this.flickerBurstEnd) {
+        // Inside a flicker burst — rapid random on/off
+        this.flickerSubTimer += dt;
+        // Random sub-flicker intervals (20-80ms)
+        if (this.flickerSubTimer > 0.02 + Math.random() * 0.06) {
+          this.flickerSubTimer = 0;
+          this.flickerBurstOn = Math.random() > 0.5;
+        }
+        lightOn = this.flickerBurstOn;
+      } else {
+        // Between bursts — light is on, schedule next
+        lightOn = true;
+        if (this.nextFlickerEvent === Infinity) {
+          const minGap = 0.5 / (flickerIntensity + 0.1);
+          const maxGap = 4.0 / (flickerIntensity + 0.1);
+          this.nextFlickerEvent = now + minGap + Math.random() * (maxGap - minGap);
+        }
+      }
+
+      // Final battery death: intense rapid flashing
+      if (this.flashBattery < 5 && this.flashBattery > 0) {
+        lightOn = Math.random() > 0.4;
+      }
+    }
+
+    this.flickerState = lightOn;
+    this.flashlight.intensity = lightOn ? 28.0 : 0;
+    this.torchLight.intensity = lightOn ? 0.6 : 1.4;
+
+    // Electrical buzz — only when light is off during a flicker burst
+    const buzzLevel = (!lightOn && now < this.flickerBurstEnd) ? flickerIntensity : 0;
+    this.audio.updateFlickerBuzz(buzzLevel);
+  }
+
+  private onItemCollected(_type: ItemType) {
+    this.audio.playPickupSound();
+    this.updateItemsHUD();
+  }
+
+  private updateItemsHUD() {
+    const fi = this.player.floorIndex;
+    const has = this.collected[fi] ?? new Set();
+    this.itemKeyEl.classList.toggle('collected', has.has('key'));
+    this.itemMapEl.classList.toggle('collected', has.has('map'));
+    this.itemCompassEl.classList.toggle('collected', has.has('compass'));
+  }
+
+  private showKeyNeeded() {
+    this.keyNeededEl.textContent = '🔑 NECESITAS LA LLAVE';
+    this.keyNeededEl.style.opacity = '1';
+    setTimeout(() => { this.keyNeededEl.style.opacity = '0'; }, 1500);
   }
 
   private updateHUD(t: number) {
@@ -289,6 +563,7 @@ export class Game {
     this.flashStatusEl.style.color = this.flashlightOn ? '#4af' : '#888';
     this.batteryPctEl.textContent = `${Math.round(pct)}%`;
 
+    this.updateItemsHUD();
     this.drawMinimap();
   }
 
@@ -299,37 +574,86 @@ export class Game {
     const S = 120;
     const cellPx = S / Math.max(W, H);
     const ctx = this.minimapCtx;
+    const has = this.collected[fi] ?? new Set<ItemType>();
+    const hasMap     = has.has('map');
+    const hasCompass = has.has('compass');
 
     ctx.clearRect(0, 0, S, S);
     ctx.fillStyle = 'rgba(0,0,0,0.7)';
     ctx.fillRect(0, 0, S, S);
 
-    for (let z = 0; z < H; z++) {
-      for (let x = 0; x < W; x++) {
-        const c  = floor.cells[z][x];
-        const px = x * cellPx, pz = z * cellPx;
-        const solid = c.walls.N && c.walls.S && c.walls.E && c.walls.W;
-        if (solid)      { ctx.fillStyle = '#334'; ctx.fillRect(px, pz, cellPx, cellPx); }
-        if (c.stairs === 'up') { ctx.fillStyle = '#fc4'; ctx.fillRect(px+1, pz+1, cellPx-2, cellPx-2); }
-        if (c.isExit)   { ctx.fillStyle = '#0f8'; ctx.fillRect(px+1, pz+1, cellPx-2, cellPx-2); }
+    // Only draw the maze layout if we have the map
+    if (hasMap) {
+      for (let z = 0; z < H; z++) {
+        for (let x = 0; x < W; x++) {
+          const c  = floor.cells[z][x];
+          const px = x * cellPx, pz = z * cellPx;
+          const solid = c.walls.N && c.walls.S && c.walls.E && c.walls.W;
+          if (solid)      { ctx.fillStyle = '#334'; ctx.fillRect(px, pz, cellPx, cellPx); }
+          if (c.stairs === 'up') { ctx.fillStyle = '#fc4'; ctx.fillRect(px+1, pz+1, cellPx-2, cellPx-2); }
+          if (c.isExit)   { ctx.fillStyle = '#0f8'; ctx.fillRect(px+1, pz+1, cellPx-2, cellPx-2); }
+        }
       }
     }
 
-    const pc = this.maze.worldToCell(this.player.getPosition().x, this.player.getPosition().z, fi);
-    ctx.fillStyle = '#fff';
-    ctx.beginPath();
-    ctx.arc(pc.x * cellPx + cellPx/2, pc.z * cellPx + cellPx/2, cellPx, 0, Math.PI * 2);
-    ctx.fill();
+    // Compass: show player, enemies, and items on map (even without map = black background with dots)
+    if (hasCompass) {
+      // Draw uncollected items on this floor
+      for (const item of this.items) {
+        if (item.floorIndex !== fi || item.collected) continue;
+        const ic = this.maze.worldToCell(item.mesh.position.x, item.mesh.position.z, fi);
+        const itemColor = item.type === 'key' ? '#fc4' : item.type === 'map' ? '#4af' : '#4f8';
+        ctx.fillStyle = itemColor;
+        ctx.fillRect(ic.x * cellPx, ic.z * cellPx, Math.max(cellPx, 2), Math.max(cellPx, 2));
+      }
 
-    for (const enemy of this.enemies) {
-      if (enemy.floorIndex !== fi) continue;
-      const ep = enemy.mesh.position;
-      const ec = this.maze.worldToCell(ep.x, ep.z, fi);
-      ctx.fillStyle = enemy.state === EnemyState.CHASING ? '#f44' : '#f84';
+      // Player position
+      const pc = this.maze.worldToCell(this.player.getPosition().x, this.player.getPosition().z, fi);
+      ctx.fillStyle = '#fff';
       ctx.beginPath();
-      ctx.arc(ec.x * cellPx + cellPx/2, ec.z * cellPx + cellPx/2, cellPx * 0.8, 0, Math.PI * 2);
+      ctx.arc(pc.x * cellPx + cellPx/2, pc.z * cellPx + cellPx/2, Math.max(cellPx, 1.5), 0, Math.PI * 2);
+      ctx.fill();
+
+      // Enemies
+      for (const enemy of this.enemies) {
+        if (enemy.floorIndex !== fi) continue;
+        const ep = enemy.mesh.position;
+        const ec = this.maze.worldToCell(ep.x, ep.z, fi);
+        ctx.fillStyle = enemy.state === EnemyState.CHASING ? '#f44' : '#f84';
+        ctx.beginPath();
+        ctx.arc(ec.x * cellPx + cellPx/2, ec.z * cellPx + cellPx/2, Math.max(cellPx * 0.8, 1.5), 0, Math.PI * 2);
+        ctx.fill();
+      }
+
+      // Stairs / exit markers (show as blinking targets even without map)
+      if (!hasMap) {
+        const blink = Math.sin(Date.now() * 0.005) > 0;
+        if (blink) {
+          for (let z = 0; z < H; z++) {
+            for (let x = 0; x < W; x++) {
+              const c = floor.cells[z][x];
+              if (c.stairs === 'up') {
+                ctx.fillStyle = '#fc4';
+                ctx.fillRect(x * cellPx, z * cellPx, Math.max(cellPx, 2), Math.max(cellPx, 2));
+              }
+              if (c.isExit) {
+                ctx.fillStyle = '#0f8';
+                ctx.fillRect(x * cellPx, z * cellPx, Math.max(cellPx, 2), Math.max(cellPx, 2));
+              }
+            }
+          }
+        }
+      }
+    } else if (hasMap) {
+      // Has map but no compass — show layout but only player dot (no enemies/items)
+      const pc = this.maze.worldToCell(this.player.getPosition().x, this.player.getPosition().z, fi);
+      ctx.fillStyle = '#fff';
+      ctx.beginPath();
+      ctx.arc(pc.x * cellPx + cellPx/2, pc.z * cellPx + cellPx/2, Math.max(cellPx, 1.5), 0, Math.PI * 2);
       ctx.fill();
     }
+
+    // No map AND no compass = completely black minimap (just the dark background)
   }
 
   private showMessage(text: string, color: string, duration: number) {
@@ -357,6 +681,8 @@ export class Game {
     this.lights = [];
     this.enemies.forEach(e => e.dispose());
     this.enemies = [];
+    this.items.forEach(i => i.dispose(this.scene));
+    this.items = [];
     // Clear dynamic objects (keep camera)
     this.scene.children
       .filter(c => c !== this.camera)

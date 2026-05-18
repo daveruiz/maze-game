@@ -142,6 +142,52 @@
       color: #aaa;
       margin-top: 2px;
     }
+    #items-hud {
+      position: absolute;
+      top: 16px;
+      left: 50%;
+      transform: translateX(-50%);
+      display: flex;
+      gap: 12px;
+      background: rgba(0,0,0,0.5);
+      border: 1px solid rgba(255,255,255,0.2);
+      border-radius: 4px;
+      padding: 6px 14px;
+    }
+    .item-slot {
+      display: flex;
+      align-items: center;
+      gap: 4px;
+      opacity: 0.25;
+      transition: opacity 0.4s;
+    }
+    .item-slot.collected {
+      opacity: 1.0;
+    }
+    .item-slot img {
+      width: 28px;
+      height: 28px;
+      image-rendering: pixelated;
+    }
+    .item-slot span {
+      font-size: 11px;
+      color: #ccc;
+      letter-spacing: 1px;
+      text-transform: uppercase;
+    }
+    #key-needed {
+      position: absolute;
+      bottom: 50%;
+      left: 50%;
+      transform: translateX(-50%);
+      font-size: 1.1rem;
+      color: #fc4;
+      text-shadow: 0 0 10px #fc4;
+      opacity: 0;
+      transition: opacity 0.3s;
+      pointer-events: none;
+      letter-spacing: 2px;
+    }
   </style>
 </head>
 <body>
@@ -166,7 +212,13 @@
         </div>
         <span id="battery-pct" style="font-size:11px;color:#aaa;min-width:30px;">100%</span>
       </div>
+      <div id="items-hud">
+        <div class="item-slot" id="item-key"><img src="item-key.png" alt="key"><span>LLAVE</span></div>
+        <div class="item-slot" id="item-map"><img src="item-map.png" alt="map"><span>MAPA</span></div>
+        <div class="item-slot" id="item-compass"><img src="item-compass.png" alt="compass"><span>BRÚJULA</span></div>
+      </div>
       <canvas id="minimap" width="120" height="120"></canvas>
+      <div id="key-needed"></div>
       <div id="message"></div>
     </div>
     <div id="overlay">
