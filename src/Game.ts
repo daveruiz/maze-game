@@ -177,10 +177,12 @@ export class Game {
     this.enemies = [];
     for (let fi = 0; fi < NUM_FLOORS; fi++) {
       const count = ENEMIES_PER_FLOOR[fi] ?? 1;
+      const floorPositions: THREE.Vector3[] = [];
       for (let i = 0; i < count; i++) {
         const enemy = new Enemy(this.scene, this.maze, this.audio);
         enemy.setPatrolZone(i);
-        enemy.spawn(fi);
+        enemy.spawn(fi, floorPositions);
+        floorPositions.push(enemy.getPosition());
         this.enemies.push(enemy);
       }
     }

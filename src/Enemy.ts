@@ -59,6 +59,8 @@ export class Enemy {
 
   // Patrol zone — each enemy is assigned a zone index for spatial distribution
   private patrolZone = 0;
+  // Reachable cells from spawn point — only patrol within these
+  private reachableCells: Cell[] = [];
 
   // Reference to siblings for separation + alerts
   private siblings: Enemy[] = [];
@@ -115,20 +117,41 @@ export class Enemy {
     this.scene.add(this.mesh);
   }
 
-  spawn(floorIndex: number) {
+  /** Spawn at a position far from the entry AND far from already-spawned siblings */
+  spawn(floorIndex: number, existingPositions: THREE.Vector3[] = []) {
     this.floorIndex = floorIndex;
     this.homeFloor = floorIndex;
 
     const floor = this.maze.floors[floorIndex];
     const entry = floor.entryCell;
     const reachable = this.floodFill(floorIndex, entry.x, entry.z);
+    this.reachableCells = reachable; // cache for patrol
 
-    // Pick a random reachable cell, prefer far from start
-    const far = reachable.filter(c => c.x > 10 || c.z > 10);
-    const candidates = far.length > 0 ? far : reachable;
-    const pick = candidates[Math.floor(Math.random() * candidates.length)];
+    // Score each reachable cell: far from entry + far from existing enemies
+    let bestScore = -Infinity;
+    let bestCell = reachable[0];
+    for (const c of reachable) {
+      const dx = c.x - entry.x, dz = c.z - entry.z;
+      let score = Math.sqrt(dx * dx + dz * dz); // distance from entry
 
-    const wp = this.maze.cellToWorld(pick.x, pick.z, floorIndex);
+      // Penalise proximity to already-placed enemies
+      for (const ep of existingPositions) {
+        const ec = this.maze.worldToCell(ep.x, ep.z, floorIndex);
+        const edx = c.x - ec.x, edz = c.z - ec.z;
+        const eDist = Math.sqrt(edx * edx + edz * edz);
+        // Strong penalty when close
+        score += Math.min(eDist, 20); // reward distance up to 20 cells
+      }
+
+      score += Math.random() * 3; // jitter
+
+      if (score > bestScore) {
+        bestScore = score;
+        bestCell = c;
+      }
+    }
+
+    const wp = this.maze.cellToWorld(bestCell.x, bestCell.z, floorIndex);
     this.pos.copy(wp);
     this.pos.y += 1.28;
     this.mesh.position.copy(this.pos);
@@ -201,13 +224,26 @@ export class Enemy {
     if (this.stuckCheckTimer >= STUCK_CHECK_INTERVAL) {
       const movedDist = this.pos.distanceTo(this.stuckCheckPos);
       if (movedDist < STUCK_DISTANCE && this.state === EnemyState.SEARCHING) {
-        // Force a new target far away
         this.searchTarget = null;
         this.path = [];
         this.searchTimer = 0;
       }
       this.stuckCheckPos.copy(this.pos);
       this.stuckCheckTimer = 0;
+    }
+
+    // Sibling proximity — if too close to another enemy while searching,
+    // pick a new target, but only once every few seconds (cooldown via stuckCheckTimer)
+    // to avoid resetting every frame in tight corridors
+    if (this.state === EnemyState.SEARCHING && this.investigateTimer <= 0
+        && this.searchTimer > 1 /* don't reset a freshly picked target */) {
+      for (const sib of this.siblings) {
+        if (sib === this || sib.homeFloor !== this.homeFloor) continue;
+        if (this.pos.distanceTo(sib.pos) < 4) {
+          this.searchTimer = 0; // will trigger new target on next doSearch call
+          break;
+        }
+      }
     }
 
     const distToPlayer = this.pos.distanceTo(playerPos);
@@ -294,7 +330,7 @@ export class Enemy {
     if (!floor) return center.clone();
 
     const centerCell = this.maze.worldToCell(center.x, center.z, this.floorIndex);
-    const cells = this.maze.getOpenCells(this.floorIndex);
+    const cells = this.reachableCells;
 
     // Find cells within investigation radius of the center
     const nearby = cells.filter(c => {
@@ -400,7 +436,7 @@ export class Enemy {
 
   /** Pick a patrol target that's far away and far from other enemies */
   private pickPatrolTarget(): THREE.Vector3 {
-    const cells = this.maze.getOpenCells(this.floorIndex);
+    const cells = this.reachableCells;
     const floor = this.maze.floors[this.floorIndex];
     if (!floor || cells.length === 0) return this.pos.clone();
 
