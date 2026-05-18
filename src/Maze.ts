@@ -195,7 +195,7 @@ export class MazeGenerator {
   // ── Village: grid streets + building blocks ───────────────────────────────
 
   private generateVillage(fi: number): MazeFloor {
-    const W = 155, H = 155;   // x5 bigger
+    const W = 78, H = 78;    // ~2.5x bigger
     const cells = this.openCells(W, H, fi);
 
     const STREET = 2; // street width in cells
@@ -226,7 +226,7 @@ export class MazeGenerator {
 
     // ── Dead ends: seal off many street segments to create traps ──────────
     // Horizontal dead ends: block a street segment with a wall across it
-    for (let i = 0; i < 120; i++) {
+    for (let i = 0; i < 50; i++) {
       const bx = Math.floor(Math.random() * (W - 4)) + 2;
       const bz = Math.floor(Math.random() * (H - 4)) + 2;
       // Pick a random direction for the dead-end wall (2-3 cells wide)
@@ -487,15 +487,43 @@ export class MazeGenerator {
 
   private carveHallway(cells: Cell[][], ax: number, az: number, bx: number, bz: number, W: number, H: number) {
     // L-shaped corridor: horizontal then vertical
+    // Only open walls in the direction of travel to avoid breaking adjacent solid cells
     const minX = Math.max(0, Math.min(ax, bx));
     const maxX = Math.min(W - 1, Math.max(ax, bx));
     for (let x = minX; x <= maxX; x++) {
-      this.openCell(cells, x, az, W, H);
+      if (x < 0 || x >= W || az < 0 || az >= H) continue;
+      // Open E/W walls along horizontal leg
+      if (x > minX) {
+        cells[az][x].walls.W = false;
+        cells[az][x - 1].walls.E = false;
+      }
+      if (x < maxX) {
+        cells[az][x].walls.E = false;
+        cells[az][x + 1].walls.W = false;
+      }
     }
     const minZ = Math.max(0, Math.min(az, bz));
     const maxZ = Math.min(H - 1, Math.max(az, bz));
     for (let z = minZ; z <= maxZ; z++) {
-      this.openCell(cells, bx, z, W, H);
+      if (bx < 0 || bx >= W || z < 0 || z >= H) continue;
+      // Open N/S walls along vertical leg
+      if (z > minZ) {
+        cells[z][bx].walls.N = false;
+        cells[z - 1][bx].walls.S = false;
+      }
+      if (z < maxZ) {
+        cells[z][bx].walls.S = false;
+        cells[z + 1][bx].walls.N = false;
+      }
+    }
+    // Open the corner cell where the two legs meet
+    if (bx >= 0 && bx < W && az >= 0 && az < H) {
+      const corner = cells[az][bx];
+      // Connect to both legs
+      if (bx > minX) { corner.walls.W = false; if (cells[az][bx - 1]) cells[az][bx - 1].walls.E = false; }
+      if (bx < maxX) { corner.walls.E = false; if (cells[az][bx + 1]) cells[az][bx + 1].walls.W = false; }
+      if (az > minZ) { corner.walls.N = false; if (cells[az - 1]?.[bx]) cells[az - 1][bx].walls.S = false; }
+      if (az < maxZ) { corner.walls.S = false; if (cells[az + 1]?.[bx]) cells[az + 1][bx].walls.N = false; }
     }
   }
 
