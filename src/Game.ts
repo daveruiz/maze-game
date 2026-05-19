@@ -1003,7 +1003,7 @@ export class Game {
   private endGame() {
     this.running = false;
     cancelAnimationFrame(this.raf);
-    this.audio.stopEnemySound();
+    this.audio.stopAll();
     document.exitPointerLock();
     // Close debug menu if open
     this.debugMenuOpen = false;
@@ -1039,6 +1039,7 @@ export class Game {
       .filter(c => c !== this.camera)
       .forEach(c => this.scene.remove(c));
     this.scene.add(this.camera);
+    this.audio.resumeAudio();
     this.start();
   }
 

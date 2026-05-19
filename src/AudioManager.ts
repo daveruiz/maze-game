@@ -1061,7 +1061,8 @@ export class AudioManager {
     src.start();
   }
 
-  dispose() {
+  /** Silence every sound source without closing the AudioContext (safe to restart). */
+  stopAll() {
     this.stopEnemySound();
     if (this.droneSource) { try { this.droneSource.stop(); } catch {} this.droneSource = null; }
     if (this.flickerSource) { try { this.flickerSource.stop(); } catch {} this.flickerSource = null; }
@@ -1075,6 +1076,17 @@ export class AudioManager {
     if (this.proxOsc3) { try { this.proxOsc3.stop(); } catch {} this.proxOsc3 = null; }
     if (this.proxOsc4) { try { this.proxOsc4.stop(); } catch {} this.proxOsc4 = null; }
     if (this.proxNoiseSource) { try { this.proxNoiseSource.stop(); } catch {} this.proxNoiseSource = null; }
+    // Zero out master gain to kill any lingering scheduled notes / tails
+    if (this.masterGain) this.masterGain.gain.value = 0;
+  }
+
+  /** Restore master gain after stopAll (called on restart). */
+  resumeAudio() {
+    if (this.masterGain) this.masterGain.gain.value = 0.4;
+  }
+
+  dispose() {
+    this.stopAll();
     this.ctx?.close();
   }
 }
