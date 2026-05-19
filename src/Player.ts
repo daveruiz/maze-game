@@ -98,8 +98,14 @@ export class Player {
 
     document.addEventListener('mousemove', e => {
       if (!this.locked) return;
-      this.yaw   -= e.movementX * 0.002;
-      this.pitch  -= e.movementY * 0.002;
+      // Clamp to reject browser pointer-lock spikes (Chromium sometimes fires
+      // movementX/Y in the hundreds on a single frame — causes view teleporting)
+      const MAX_MOVEMENT = 150;  // px per event — well above any real flick
+      let mx = e.movementX;
+      let my = e.movementY;
+      if (Math.abs(mx) > MAX_MOVEMENT || Math.abs(my) > MAX_MOVEMENT) return; // discard spike
+      this.yaw   -= mx * 0.002;
+      this.pitch  -= my * 0.002;
       this.pitch = Math.max(-Math.PI / 2.2, Math.min(Math.PI / 2.2, this.pitch));
     });
 

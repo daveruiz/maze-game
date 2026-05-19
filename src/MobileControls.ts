@@ -180,10 +180,10 @@ export class MobileControls {
         position: absolute;
         pointer-events: auto;
       }
-      /* Top button (flashlight): vertically centered, closer to edge */
-      #btn-mobile-flashlight { top: calc(50% - ${BTN_SIZE + 10}px); right: 20px; }
-      /* Bottom button (jump): just below center, slightly more inset for thumb arc */
-      #btn-mobile-jump       { top: calc(50% + 10px);              right: 36px; }
+      /* Top button (jump): vertically centered, closer to edge */
+      #btn-mobile-jump       { top: calc(50% - ${BTN_SIZE + 10}px); right: 20px; }
+      /* Bottom button (flashlight): just below center, inset for thumb arc */
+      #btn-mobile-flashlight { top: calc(50% + 10px);              right: 86px; }
       .mobile-btn {
         width: ${BTN_SIZE}px; height: ${BTN_SIZE}px;
         border-radius: 50%;

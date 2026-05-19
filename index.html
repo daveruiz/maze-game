@@ -52,13 +52,15 @@
     }
     #info-panel {
       position: absolute;
-      top: 16px; left: 16px;
+      bottom: 16px; left: 50%;
+      transform: translateX(-50%);
       background: rgba(0,0,0,0.5);
-      border: 1px solid rgba(255,255,255,0.2);
       border-radius: 4px;
-      padding: 8px 12px;
-      font-size: 13px;
+      padding: 6px 16px;
+      font-size: 12px;
       line-height: 1.6;
+      text-align: center;
+      white-space: nowrap;
     }
     #enemy-status {
       position: absolute;
@@ -136,7 +138,6 @@
       position: absolute;
       bottom: 16px; right: 16px;
       opacity: 0.7;
-      border: 1px solid rgba(255,255,255,0.3);
       border-radius: 2px;
     }
     #floor-indicator {
@@ -146,15 +147,11 @@
     }
     #items-hud {
       position: absolute;
-      top: 16px;
-      left: 50%;
-      transform: translateX(-50%);
+      bottom: 142px; right: 16px;
       display: flex;
-      gap: 12px;
-      background: rgba(0,0,0,0.5);
-      border: 1px solid rgba(255,255,255,0.2);
-      border-radius: 4px;
-      padding: 6px 14px;
+      gap: 8px;
+      background: transparent;
+      padding: 4px 8px;
     }
     .item-slot {
       display: flex;
@@ -170,12 +167,6 @@
       width: 28px;
       height: 28px;
       image-rendering: pixelated;
-    }
-    .item-slot span {
-      font-size: 11px;
-      color: #ccc;
-      letter-spacing: 1px;
-      text-transform: uppercase;
     }
     #key-needed {
       position: absolute;
@@ -287,7 +278,7 @@
         </div>
       </div>
       <div id="battery-low" style="position:absolute;bottom:40%;left:50%;transform:translateX(-50%);font-size:0.85rem;color:#f44;letter-spacing:2px;font-weight:bold;text-shadow:0 0 10px #f44;opacity:0;transition:opacity 0.3s;pointer-events:none;">🔋 BATERÍA BAJA</div>
-      <div id="battery-hud" style="position:absolute;bottom:20px;left:16px;display:flex;align-items:center;gap:8px;background:rgba(0,0,0,0.5);border:1px solid rgba(255,255,255,0.2);border-radius:4px;padding:6px 12px;">
+      <div id="battery-hud" style="position:absolute;bottom:20px;left:16px;display:flex;align-items:center;gap:8px;background:rgba(0,0,0,0.5);border-radius:4px;padding:6px 12px;">
         <span id="battery-icon" style="font-size:18px;">🔦</span>
         <div style="display:flex;flex-direction:column;gap:3px;">
           <span id="flashlight-status" style="font-size:11px;color:#888;letter-spacing:1px;font-weight:bold;">OFF</span>
@@ -298,9 +289,9 @@
         <span id="battery-pct" style="font-size:11px;color:#aaa;min-width:30px;">100%</span>
       </div>
       <div id="items-hud">
-        <div class="item-slot" id="item-key"><img src="item-key.png" alt="key"><span>LLAVE</span></div>
-        <div class="item-slot" id="item-map"><img src="item-map.png" alt="map"><span>MAPA</span></div>
-        <div class="item-slot" id="item-compass"><img src="item-compass.png" alt="compass"><span>BRÚJULA</span></div>
+        <div class="item-slot" id="item-key"><img src="item-key.png" alt="key"></div>
+        <div class="item-slot" id="item-map"><img src="item-map.png" alt="map"></div>
+        <div class="item-slot" id="item-compass"><img src="item-compass.png" alt="compass"></div>
       </div>
       <canvas id="minimap" width="120" height="120"></canvas>
       <div id="key-needed"></div>

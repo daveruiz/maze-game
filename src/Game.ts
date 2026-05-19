@@ -66,6 +66,11 @@ export class Game {
   /** Per-floor collected items */
   private collected: Record<number, Set<ItemType>> = {};
 
+  // Sound pings for compass minimap (enemy sounds → temporary dots)
+  private soundPings: { x: number; z: number; floor: number; time: number }[] = [];
+  private prevEnemyStates: Map<Enemy, EnemyState> = new Map();
+  private enemySoundTimers: Map<Enemy, number> = new Map();
+
   // HUD
   private minimapCtx:        CanvasRenderingContext2D;
   private minimapCanvas:     HTMLCanvasElement;
@@ -216,8 +221,11 @@ export class Game {
     }
 
     // Spawn enemies near interest points (key, stairs, exit)
-    const ENEMIES_PER_FLOOR = [1, 2, 4];
+    const ENEMIES_PER_FLOOR = [1, 3, 6];
     this.enemies = [];
+    this.soundPings = [];
+    this.prevEnemyStates.clear();
+    this.enemySoundTimers.clear();
     for (let fi = 0; fi < NUM_FLOORS; fi++) {
       const count = ENEMIES_PER_FLOOR[fi] ?? 1;
       const floorPositions: THREE.Vector3[] = [];
@@ -382,19 +390,34 @@ export class Game {
         this.camera.rotation.x = this.deathPitch;
       }
 
-      // Slow zoom in: FOV narrows from 75 → 45 over the death duration
-      const zoomProgress = Math.min(1.0, this.deathTimer / 2.5);
-      this.camera.fov = 75 - 30 * zoomProgress;
+      // Phase 1 (0–2.5s): FOV narrows 75 → 45
+      // Phase 2 (2.5–3.3s): dramatic zoom FOV 45 → 7.5 with ease-in + camera roll
+      const PHASE1_END = 2.5;
+      const PHASE2_DUR = 0.8;
+      const TOTAL_DEATH = PHASE1_END + PHASE2_DUR;
+
+      if (this.deathTimer <= PHASE1_END) {
+        const zoomProgress = this.deathTimer / PHASE1_END;
+        this.camera.fov = 75 - 30 * zoomProgress;
+      } else {
+        // Ease-in (quadratic) for dramatic final zoom
+        const p = Math.min(1.0, (this.deathTimer - PHASE1_END) / PHASE2_DUR);
+        const eased = p * p;  // ease-in
+        this.camera.fov = 45 - 37.5 * eased;  // 45 → 7.5
+        // Small camera roll for disorientation
+        this.camera.rotation.z = eased * 0.15;  // ~8.6° max roll
+      }
       this.camera.updateProjectionMatrix();
 
       this.horrorPass.uniforms['time'].value = t;
       this.composer.render();
 
-      if (this.deathTimer >= 2.5) {
+      if (this.deathTimer >= TOTAL_DEATH) {
         this.dying = false;
         this.horrorPass.uniforms['vhsIntensity'].value = 0;
-        // Restore FOV
+        // Restore FOV and roll
         this.camera.fov = 75;
+        this.camera.rotation.z = 0;
         this.camera.updateProjectionMatrix();
         this.endGame();
       }
@@ -471,6 +494,39 @@ export class Game {
         if (enemy.homeFloor === this.player.floorIndex) {
           const d = enemy.getPosition().distanceTo(pp);
           if (d < nearestDist) nearestDist = d;
+        }
+      }
+    }
+
+    // ── Sound pings for compass minimap ──────────────────────────────────
+    const now = performance.now() / 1000;
+    const PING_DURATION = 3.0; // seconds a ping stays visible
+    const PING_INTERVAL = 4.0; // seconds between periodic sound pings
+    // Prune expired pings
+    this.soundPings = this.soundPings.filter(p => now - p.time < PING_DURATION);
+    // Record pings from enemy sounds
+    if (!this.debugNoEnemy) {
+      for (const enemy of this.enemies) {
+        if (enemy.homeFloor !== this.player.floorIndex) continue;
+        const prevState = this.prevEnemyStates.get(enemy);
+        const curState = enemy.state;
+
+        // State transition = sound event (spotted alert, chase growl, etc.)
+        if (prevState !== undefined && prevState !== curState) {
+          const ep = enemy.getPosition();
+          this.soundPings.push({ x: ep.x, z: ep.z, floor: enemy.floorIndex, time: now });
+          this.enemySoundTimers.set(enemy, now);
+        }
+        this.prevEnemyStates.set(enemy, curState);
+
+        // Periodic pings while enemy is actively making noise (searching loop, chasing growls)
+        if (curState === EnemyState.SEARCHING || curState === EnemyState.CHASING) {
+          const lastPing = this.enemySoundTimers.get(enemy) ?? 0;
+          if (now - lastPing >= PING_INTERVAL) {
+            const ep = enemy.getPosition();
+            this.soundPings.push({ x: ep.x, z: ep.z, floor: enemy.floorIndex, time: now });
+            this.enemySoundTimers.set(enemy, now);
+          }
         }
       }
     }
@@ -743,15 +799,42 @@ export class Game {
       // Player arrow (directional)
       this.drawPlayerArrow(ctx, fi, cellW, cellH, dotMin);
 
-      // Enemies
-      for (const enemy of this.enemies) {
-        if (enemy.floorIndex !== fi) continue;
-        const ep = enemy.mesh.position;
-        const ec = this.maze.worldToCell(ep.x, ep.z, fi);
-        ctx.fillStyle = enemy.state === EnemyState.CHASING ? '#f44' : '#f84';
-        ctx.beginPath();
-        ctx.arc(ec.x * cellW + cellW / 2, ec.z * cellH + cellH / 2, Math.max(dotMin * 0.8, 1.5), 0, Math.PI * 2);
-        ctx.fill();
+      // Enemies — debug mode shows real-time positions; compass shows fading sound pings
+      if (this.debugRevealMap) {
+        // Debug: always show all enemies in real-time
+        for (const enemy of this.enemies) {
+          if (enemy.floorIndex !== fi) continue;
+          const ep = enemy.mesh.position;
+          const ec = this.maze.worldToCell(ep.x, ep.z, fi);
+          ctx.fillStyle = enemy.state === EnemyState.CHASING ? '#f44' : '#f84';
+          ctx.beginPath();
+          ctx.arc(ec.x * cellW + cellW / 2, ec.z * cellH + cellH / 2, Math.max(dotMin * 0.8, 1.5), 0, Math.PI * 2);
+          ctx.fill();
+        }
+      } else {
+        // Compass: show sound pings that fade over 3 seconds
+        const now = performance.now() / 1000;
+        for (const ping of this.soundPings) {
+          if (ping.floor !== fi) continue;
+          const age = now - ping.time;
+          if (age >= 3.0) continue;
+          const alpha = 1.0 - age / 3.0; // fade out linearly
+          const pc = this.maze.worldToCell(ping.x, ping.z, fi);
+          // Pulsing ring effect that expands as it fades
+          const ringRadius = Math.max(dotMin * 0.8, 1.5) + age * 0.8;
+          ctx.globalAlpha = alpha * 0.9;
+          ctx.fillStyle = '#f84';
+          ctx.beginPath();
+          ctx.arc(pc.x * cellW + cellW / 2, pc.z * cellH + cellH / 2, Math.max(dotMin * 0.6, 1.2), 0, Math.PI * 2);
+          ctx.fill();
+          // Expanding ring
+          ctx.strokeStyle = '#f84';
+          ctx.lineWidth = 0.8;
+          ctx.beginPath();
+          ctx.arc(pc.x * cellW + cellW / 2, pc.z * cellH + cellH / 2, ringRadius, 0, Math.PI * 2);
+          ctx.stroke();
+          ctx.globalAlpha = 1.0;
+        }
       }
 
       // Stairs / exit markers (show as blinking targets even without map)
@@ -934,6 +1017,9 @@ export class Game {
     this.lights = [];
     this.enemies.forEach(e => e.dispose());
     this.enemies = [];
+    this.soundPings = [];
+    this.prevEnemyStates.clear();
+    this.enemySoundTimers.clear();
     this.items.forEach(i => i.dispose(this.scene));
     this.items = [];
     // Reset debug state
