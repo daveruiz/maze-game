@@ -4,8 +4,8 @@
  * Buffers (MP3s + procedural) are loaded/generated once and shared.
  */
 
-const IDLE_FILES    = ['idle-01.mp3', 'idle-02.mp3', 'idle-03.mp3', 'idle-04.mp3', 'idle-05.mp3'];
-const CHASING_FILES = ['chasing-01.mp3', 'chasing-02.mp3', 'chasing-03.mp3', 'chasing-04.mp3'];
+const IDLE_FILES    = ['idle-01.mp3', 'idle-02.mp3', 'idle-03.mp3', 'idle-04.mp3', 'idle-05.mp3', 'idle-06.mp3'];
+const CHASING_FILES = ['chasing-01.mp3', 'chasing-02.mp3', 'chasing-03.mp3', 'chasing-04.mp3', 'chasing-05.mp3', 'chasing-06.mp3'];
 const ALERT_FILE    = 'alert.mp3';
 
 const IDLE_MIN_INTERVAL    = 6;
@@ -193,6 +193,7 @@ interface SharedBuffers {
   searchingBuf: AudioBuffer | null;
   chasingBuf:   AudioBuffer | null;
   alertBuf:     AudioBuffer | null;
+  deathGrowlBuf: AudioBuffer | null;
   idleMp3s:     AudioBuffer[];
   chasingMp3s:  AudioBuffer[];
 }
@@ -200,8 +201,9 @@ interface SharedBuffers {
 export class AudioManager {
   private ctx: AudioContext | null = null;
   private masterGain!: GainNode;
+  private reverbSend!: GainNode;
   private shared: SharedBuffers = {
-    searchingBuf: null, chasingBuf: null, alertBuf: null,
+    searchingBuf: null, chasingBuf: null, alertBuf: null, deathGrowlBuf: null,
     idleMp3s: [], chasingMp3s: [],
   };
   private channels: Map<number, EnemyChannel> = new Map();
@@ -209,9 +211,27 @@ export class AudioManager {
 
   init() {
     this.ctx = new AudioContext();
+
+    // Master volume → destination
     this.masterGain = this.ctx.createGain();
-    this.masterGain.gain.value = 0.6;
-    this.masterGain.connect(this.ctx.destination);
+    this.masterGain.gain.value = 0.2;
+
+    // Reverb send: master → convolver → wet gain → destination
+    //              master → dry (direct) → destination
+    const convolver = this.ctx.createConvolver();
+    convolver.buffer = this.generateImpulseResponse(1.6, 5.0);
+
+    const wetGain = this.ctx.createGain();
+    wetGain.gain.value = 0.75;   // reverb mix level
+
+    const dryGain = this.ctx.createGain();
+    dryGain.gain.value = 1.0;
+
+    this.masterGain.connect(dryGain).connect(this.ctx.destination);
+    this.masterGain.connect(convolver).connect(wetGain).connect(this.ctx.destination);
+
+    // Keep reference so we can adjust reverb per floor
+    this.reverbSend = wetGain;
 
     // Generate procedural buffers
     this.shared.searchingBuf = this.makeSearchingBuffer();
@@ -222,6 +242,47 @@ export class AudioManager {
 
     // Start proximity tension drone (silent until enemies are near)
     this.initDrone();
+  }
+
+  /**
+   * Generate a synthetic impulse response for convolution reverb.
+   * @param decay   Time in seconds for the reverb tail to decay
+   * @param density Higher values = more diffuse (more random reflections)
+   */
+  private generateImpulseResponse(decay: number, density: number): AudioBuffer {
+    const sr = this.ctx!.sampleRate;
+    const len = sr * decay;
+    const buf = this.ctx!.createBuffer(2, len, sr);
+    const L = buf.getChannelData(0);
+    const R = buf.getChannelData(1);
+
+    for (let i = 0; i < len; i++) {
+      const t = i / sr;
+      // Exponential decay envelope
+      const env = Math.exp(-t * density);
+      // Diffuse white noise with some early reflection clustering
+      const earlyBoost = t < 0.08 ? 1.5 : 1.0;
+      L[i] = (Math.random() * 2 - 1) * env * earlyBoost;
+      R[i] = (Math.random() * 2 - 1) * env * earlyBoost;
+    }
+
+    // Add a few discrete early reflections for realism
+    const reflections = [0.012, 0.025, 0.038, 0.055, 0.073];
+    for (const rt of reflections) {
+      const idx = Math.floor(rt * sr);
+      if (idx < len) {
+        const amp = 0.4 * Math.exp(-rt * 2);
+        L[idx] += amp * (Math.random() > 0.5 ? 1 : -1);
+        R[idx] += amp * (Math.random() > 0.5 ? 1 : -1);
+      }
+    }
+
+    return buf;
+  }
+
+  /** Adjust reverb intensity per floor (called on floor change) */
+  setReverbLevel(level: number) {
+    if (this.reverbSend) this.reverbSend.gain.value = level;
   }
 
   private async loadMp3Buffers() {
@@ -236,12 +297,14 @@ export class AudioManager {
         return null;
       }
     };
-    const [alertBuf, ...rest] = await Promise.all([
+    const [alertBuf, deathGrowlBuf, ...rest] = await Promise.all([
       load(ALERT_FILE),
+      load('death-growl.mp3'),
       ...IDLE_FILES.map(f => load(f)),
       ...CHASING_FILES.map(f => load(f)),
     ]);
-    this.shared.alertBuf    = alertBuf;
+    this.shared.alertBuf      = alertBuf;
+    this.shared.deathGrowlBuf = deathGrowlBuf;
     this.shared.idleMp3s    = rest.slice(0, IDLE_FILES.length).filter(Boolean) as AudioBuffer[];
     this.shared.chasingMp3s = rest.slice(IDLE_FILES.length).filter(Boolean) as AudioBuffer[];
   }
@@ -380,6 +443,224 @@ export class AudioManager {
     this.droneGain.gain.value = this.droneCurrent;
   }
 
+  // ── Chase tension (high-pitch rising shriek) ─────────────────────────────
+
+  private chaseOsc1: OscillatorNode | null = null;
+  private chaseOsc2: OscillatorNode | null = null;
+  private chaseNoiseSource: AudioBufferSourceNode | null = null;
+  private chaseGain: GainNode | null = null;
+  private chaseNoiseGain: GainNode | null = null;
+  private chaseFilter: BiquadFilterNode | null = null;
+  private chaseActive = false;
+  private chasePitch = 0;     // current smoothed pitch 0..1
+  private chaseVolume = 0;    // current smoothed volume
+
+  private initChaseLayer() {
+    if (!this.ctx || this.chaseOsc1) return;
+
+    // Two detuned oscillators for dissonant screech
+    this.chaseOsc1 = this.ctx.createOscillator();
+    this.chaseOsc1.type = 'sawtooth';
+    this.chaseOsc1.frequency.value = 400;
+
+    this.chaseOsc2 = this.ctx.createOscillator();
+    this.chaseOsc2.type = 'sawtooth';
+    this.chaseOsc2.frequency.value = 403; // slight detune for beating
+
+    // High-pass filter to keep it shrill
+    this.chaseFilter = this.ctx.createBiquadFilter();
+    this.chaseFilter.type = 'highpass';
+    this.chaseFilter.frequency.value = 600;
+    this.chaseFilter.Q.value = 2;
+
+    // Main gain (starts silent)
+    this.chaseGain = this.ctx.createGain();
+    this.chaseGain.gain.value = 0;
+
+    this.chaseOsc1.connect(this.chaseFilter);
+    this.chaseOsc2.connect(this.chaseFilter);
+    this.chaseFilter.connect(this.chaseGain);
+
+    // Chase-specific dry/wet routing: 50% dry, 200% wet reverb
+    const chaseDry = this.ctx.createGain();
+    chaseDry.gain.value = 0.1;
+
+    const chaseConvolver = this.ctx.createConvolver();
+    chaseConvolver.buffer = this.generateImpulseResponse(2.2, 4.0);
+
+    const chaseWet = this.ctx.createGain();
+    chaseWet.gain.value = 2.0;
+
+    this.chaseGain.connect(chaseDry).connect(this.masterGain);
+    this.chaseGain.connect(chaseConvolver).connect(chaseWet).connect(this.masterGain);
+
+    // Noise layer for texture
+    const sr = this.ctx.sampleRate;
+    const noiseBuf = this.ctx.createBuffer(1, sr * 2, sr);
+    const nd = noiseBuf.getChannelData(0);
+    for (let i = 0; i < nd.length; i++) {
+      nd[i] = (Math.random() - 0.5) * 0.6;
+    }
+    this.chaseNoiseSource = this.ctx.createBufferSource();
+    this.chaseNoiseSource.buffer = noiseBuf;
+    this.chaseNoiseSource.loop = true;
+
+    this.chaseNoiseGain = this.ctx.createGain();
+    this.chaseNoiseGain.gain.value = 0;
+
+    const noiseFilter = this.ctx.createBiquadFilter();
+    noiseFilter.type = 'bandpass';
+    noiseFilter.frequency.value = 3000;
+    noiseFilter.Q.value = 1.5;
+
+    this.chaseNoiseSource.connect(noiseFilter);
+    noiseFilter.connect(this.chaseNoiseGain);
+    // Noise also goes through the same chase reverb
+    this.chaseNoiseGain.connect(chaseDry).connect(this.masterGain);
+    this.chaseNoiseGain.connect(chaseConvolver);
+
+    this.chaseOsc1.start();
+    this.chaseOsc2.start();
+    this.chaseNoiseSource.start();
+  }
+
+  /**
+   * Call every frame during gameplay.
+   * @param chasing  true if any enemy is in CHASING state
+   * @param nearestDist  distance to nearest chasing enemy (Infinity if none)
+   */
+  updateChaseTension(chasing: boolean, nearestDist: number) {
+    if (!this.ctx) return;
+    this.initChaseLayer();
+    if (!this.chaseOsc1 || !this.chaseOsc2 || !this.chaseGain || !this.chaseNoiseGain) return;
+
+    const MAX_DIST = 25;
+    const MIN_DIST = 2;
+
+    if (chasing && nearestDist < MAX_DIST) {
+      // Proximity 0..1 (1 = touching)
+      const prox = 1.0 - Math.max(0, Math.min(1, (nearestDist - MIN_DIST) / (MAX_DIST - MIN_DIST)));
+
+      // Pitch rises: 400Hz → 2200Hz
+      const targetPitch = prox;
+      this.chasePitch += (targetPitch - this.chasePitch) * 0.06;
+
+      const freq = 400 + this.chasePitch * 1800;
+      this.chaseOsc1.frequency.value = freq;
+      this.chaseOsc2.frequency.value = freq + 3 + this.chasePitch * 15; // detune widens with proximity
+
+      // Volume ramps up: quadratic for dramatic curve
+      const targetVol = prox * prox * 0.03;
+      this.chaseVolume += (targetVol - this.chaseVolume) * 0.08;
+      this.chaseGain.gain.value = this.chaseVolume;
+
+      // Noise layer increases
+      this.chaseNoiseGain.gain.value = this.chaseVolume * 0.4;
+
+      // Filter opens up as it gets closer
+      this.chaseFilter!.frequency.value = 600 - prox * 400;
+
+      this.chaseActive = true;
+    } else {
+      // Fade out smoothly
+      this.chaseVolume *= 0.92;
+      this.chasePitch *= 0.95;
+      if (this.chaseVolume < 0.001) this.chaseVolume = 0;
+      this.chaseGain.gain.value = this.chaseVolume;
+      this.chaseNoiseGain.gain.value = this.chaseVolume * 0.4;
+
+      if (this.chaseVolume === 0) {
+        this.chaseOsc1.frequency.value = 400;
+        this.chaseOsc2.frequency.value = 403;
+        this.chaseActive = false;
+      }
+    }
+  }
+
+  /** Explosive death stinger — harsh atonal blast that decays */
+  playDeathStinger() {
+    if (!this.ctx) return;
+    const sr = this.ctx.sampleRate;
+    const dur = 3.0;
+    const buf = this.ctx.createBuffer(2, sr * dur, sr);
+    const L = buf.getChannelData(0);
+    const R = buf.getChannelData(1);
+
+    // Dissonant string cluster — minor 2nds and tritones, like horror movie strings
+    // Notes: E4, F4 (minor 2nd), Bb4 (tritone from E), B4 (minor 2nd from Bb), + low octave
+    // Octave up from before, each note has a detune rate (Hz/s drift) and pitch drop
+    const notes = [
+      { freq: 659.26, amp: 0.20, decay: 1.8, pan: -0.3, detune:  12, drop: 0.97 },  // E5
+      { freq: 698.46, amp: 0.22, decay: 1.6, pan:  0.3, detune: -15, drop: 0.96 },  // F5
+      { freq: 932.33, amp: 0.18, decay: 2.0, pan: -0.5, detune:  18, drop: 0.95 },  // Bb5
+      { freq: 987.77, amp: 0.16, decay: 1.7, pan:  0.5, detune: -20, drop: 0.97 },  // B5
+      { freq: 329.63, amp: 0.15, decay: 2.5, pan:  0.0, detune:   8, drop: 0.98 },  // E4 — anchor
+      { freq: 349.23, amp: 0.12, decay: 2.2, pan:  0.0, detune: -10, drop: 0.97 },  // F4
+    ];
+
+    for (let i = 0; i < L.length; i++) {
+      const t = i / sr;
+
+      // Sharp attack, long sustain that slowly dies
+      const attack = 1 - Math.exp(-t * 80);
+      let sampleL = 0, sampleR = 0;
+
+      for (const n of notes) {
+        const env = attack * Math.exp(-t / n.decay);
+        // Pitch drops over time + progressive detuning
+        const pitchMult = 1.0 + (n.drop - 1.0) * (t / dur);   // slides toward drop ratio
+        const freq = n.freq * pitchMult + n.detune * t;         // detune widens over time
+        // Sawtooth-ish timbre (sum of harmonics) for string-like quality
+        const phase = 2 * Math.PI * freq * t;
+        const fundamental = Math.sin(phase);
+        const h2 = Math.sin(phase * 2) * 0.5;
+        const h3 = Math.sin(phase * 3) * 0.25;
+        const h4 = Math.sin(phase * 4) * 0.12;
+        // Vibrato intensifies over time — increasingly unstable
+        const vibrato = Math.sin(2 * Math.PI * (4.5 + t * 1.5) * t) * 0.006 * t;
+        const tone = (fundamental + h2 + h3 + h4) * (1 + vibrato);
+
+        const val = tone * env * n.amp;
+        // Simple stereo panning
+        const lGain = Math.cos((n.pan + 1) * Math.PI / 4);
+        const rGain = Math.sin((n.pan + 1) * Math.PI / 4);
+        sampleL += val * lGain;
+        sampleR += val * rGain;
+      }
+
+      // Subtle low rumble underneath
+      const rumble = Math.sin(2 * Math.PI * 36 * t) * 0.08 * Math.exp(-t / 2.5);
+
+      L[i] = sampleL + rumble;
+      R[i] = sampleR + rumble;
+    }
+
+    const src = this.ctx.createBufferSource();
+    src.buffer = buf;
+    const g = this.ctx.createGain();
+    g.gain.value = 0.45;
+    src.connect(g).connect(this.masterGain);
+    src.start();
+
+    // Play monster growl MP3 at normal speed
+    if (this.shared.deathGrowlBuf) {
+      const growl = this.ctx.createBufferSource();
+      growl.buffer = this.shared.deathGrowlBuf;
+      growl.playbackRate.value = 1.0;
+      const growlGain = this.ctx.createGain();
+      growlGain.gain.value = 0.7;
+      growl.connect(growlGain).connect(this.masterGain);
+      growl.start();
+    }
+
+    // Kill the chase tension layer immediately
+    if (this.chaseGain) this.chaseGain.gain.value = 0;
+    if (this.chaseNoiseGain) this.chaseNoiseGain.gain.value = 0;
+    this.chaseVolume = 0;
+    this.chasePitch = 0;
+    this.chaseActive = false;
+  }
+
   // ── Flashlight click (non-positional) ───────────────────────────────────
 
   playFlashlightToggle(on: boolean) {
@@ -471,6 +752,9 @@ export class AudioManager {
     this.stopEnemySound();
     if (this.droneSource) { try { this.droneSource.stop(); } catch {} this.droneSource = null; }
     if (this.flickerSource) { try { this.flickerSource.stop(); } catch {} this.flickerSource = null; }
+    if (this.chaseOsc1) { try { this.chaseOsc1.stop(); } catch {} this.chaseOsc1 = null; }
+    if (this.chaseOsc2) { try { this.chaseOsc2.stop(); } catch {} this.chaseOsc2 = null; }
+    if (this.chaseNoiseSource) { try { this.chaseNoiseSource.stop(); } catch {} this.chaseNoiseSource = null; }
     this.ctx?.close();
   }
 }

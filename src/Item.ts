@@ -17,7 +17,7 @@ const SPRITE_HEIGHT  = 1.4;   // target height in world units
 const ITEM_ASPECTS: Record<ItemType, number> = {
   key:     1.5,    // landscape ~3:2
   map:     1.5,    // landscape ~3:2
-  compass: 0.9,    // nearly square, slightly wide
+  compass: 1.5,    // landscape ~3:2 (512x341)
 };
 
 export class Item {

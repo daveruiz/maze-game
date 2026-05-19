@@ -23,25 +23,29 @@ export class GamepadManager {
   private prevA  = false;
   private prevX  = false;
 
+  // Track whether gamepad is the active input source
+  private active = false;
+
   constructor(callbacks: { toggleFlashlight: () => void }) {
     this.toggleFlashlight = callbacks.toggleFlashlight;
   }
 
   setPlayer(player: Player) { this.player = player; }
 
-  /** Call every frame — reads ALL connected gamepads and feeds the player. Returns true if any gamepad had input. */
+  /** Call every frame — reads ALL connected gamepads and feeds the player. */
   update(): boolean {
     if (!this.player) return false;
 
     const gamepads = navigator.getGamepads?.() ?? [];
-    let hadInput = false;
 
     // Accumulate input from all connected gamepads
     let lx = 0, ly = 0, rx = 0, ry = 0;
     let l3 = false, a = false, x = false;
+    let anyConnected = false;
 
     for (const gp of gamepads) {
       if (!gp || !gp.connected) continue;
+      anyConnected = true;
 
       const glx = this.applyDeadZone(gp.axes[AXIS_LX] ?? 0);
       const gly = this.applyDeadZone(gp.axes[AXIS_LY] ?? 0);
@@ -58,11 +62,32 @@ export class GamepadManager {
       l3 = l3 || (gp.buttons[BTN_L3]?.pressed ?? false);
       a  = a  || (gp.buttons[BTN_A]?.pressed ?? false);
       x  = x  || (gp.buttons[BTN_X]?.pressed ?? false);
-
-      hadInput = true;
     }
 
-    if (!hadInput) return false;
+    if (!anyConnected) {
+      // No gamepad — release ownership if we had it
+      if (this.active) this.deactivate();
+      return false;
+    }
+
+    // Check if there's any real input from the gamepad
+    const hasInput = Math.abs(lx) > 0 || Math.abs(ly) > 0
+                  || Math.abs(rx) > 0 || Math.abs(ry) > 0
+                  || l3 || a || x;
+
+    // Activate on first real input, deactivate when keyboard takes over
+    // (keyboard deactivation is handled by the keydown listener below)
+    if (hasInput && !this.active) {
+      this.active = true;
+    }
+
+    if (!this.active) {
+      // Gamepad connected but not active — don't override keyboard
+      this.prevL3 = l3;
+      this.prevA = a;
+      this.prevX = x;
+      return false;
+    }
 
     // ── Left stick → movement ──────────────────────────────────────────
     this.player.setKey('KeyW', ly < -0.35);
@@ -99,9 +124,24 @@ export class GamepadManager {
     return true;
   }
 
+  /** Release gamepad control — clears virtual keys so keyboard can take over */
+  deactivate() {
+    this.active = false;
+    this.sprintLatched = false;
+    if (this.player) {
+      for (const k of ['KeyW', 'KeyS', 'KeyA', 'KeyD', 'ShiftLeft']) {
+        this.player.setKey(k, false);
+      }
+    }
+  }
+
+  /** Call from outside when keyboard input is detected */
+  onKeyboardInput() {
+    if (this.active) this.deactivate();
+  }
+
   private applyDeadZone(value: number): number {
     if (Math.abs(value) < DEAD_ZONE) return 0;
-    // Re-map so the range just outside dead zone starts at 0
     const sign = value > 0 ? 1 : -1;
     return sign * (Math.abs(value) - DEAD_ZONE) / (1 - DEAD_ZONE);
   }

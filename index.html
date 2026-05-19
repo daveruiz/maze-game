@@ -281,17 +281,12 @@
         <div id="floor-text">PLANTA 1 / 3</div>
         <div id="floor-indicator" id="objective-text">🚪 Encuentra la salida</div>
       </div>
-      <div id="enemy-status">
-        <div style="font-size:0.7rem;color:#888;margin-bottom:2px;">ENTIDAD</div>
-        <div id="enemy-indicator" style="color:#4af;">◉ BUSCANDO</div>
-      </div>
-      <div id="stamina-hud" style="position:absolute;bottom:54px;left:16px;display:flex;align-items:center;gap:8px;background:rgba(0,0,0,0.5);border:1px solid rgba(255,255,255,0.2);border-radius:4px;padding:6px 12px;">
-        <span style="font-size:14px;">🏃</span>
-        <div style="width:100px;height:8px;background:rgba(255,255,255,0.15);border-radius:4px;overflow:hidden;">
-          <div id="stamina-fill" style="height:100%;width:100%;background:#4f8;transition:width 0.2s,background 0.2s;border-radius:4px;"></div>
+      <div id="stamina-hud" style="position:absolute;top:54%;left:50%;transform:translateX(-50%);display:none;pointer-events:none;">
+        <div style="width:80px;height:4px;background:rgba(255,255,255,0.1);border-radius:2px;overflow:hidden;">
+          <div id="stamina-fill" style="height:100%;width:100%;background:#4f8;transition:width 0.2s,background 0.2s;border-radius:2px;"></div>
         </div>
-        <span id="stamina-pct" style="font-size:11px;color:#aaa;min-width:30px;">100%</span>
       </div>
+      <div id="battery-low" style="position:absolute;bottom:40%;left:50%;transform:translateX(-50%);font-size:0.85rem;color:#f44;letter-spacing:2px;font-weight:bold;text-shadow:0 0 10px #f44;opacity:0;transition:opacity 0.3s;pointer-events:none;">🔋 BATERÍA BAJA</div>
       <div id="battery-hud" style="position:absolute;bottom:20px;left:16px;display:flex;align-items:center;gap:8px;background:rgba(0,0,0,0.5);border:1px solid rgba(255,255,255,0.2);border-radius:4px;padding:6px 12px;">
         <span id="battery-icon" style="font-size:18px;">🔦</span>
         <div style="display:flex;flex-direction:column;gap:3px;">
@@ -314,7 +309,7 @@
         <h2>DEBUG</h2>
         <div class="section-label">Saltar a planta</div>
         <div class="floor-btns">
-          <button data-floor="0">1 — Catacumbas</button>
+          <button data-floor="0">1 — Sótano</button>
           <button data-floor="1">2 — Casa</button>
           <button data-floor="2">3 — Pueblo</button>
         </div>
@@ -330,7 +325,7 @@
       <p style="color:#e8c56d;margin-bottom:20px;letter-spacing:2px;">RUNNER</p>
       <div class="controls-list">
         WASD — Mover &nbsp;|&nbsp; SHIFT — Correr &nbsp;|&nbsp; ESPACIO — Saltar &nbsp;|&nbsp; F — Linterna<br/>
-        Llega a la salida en la última planta<br/>
+        Escapa de la criatura<br/>
         <span style="color:#f66;">Cuidado con lo que te persigue...</span>
       </div>
       <button id="start-btn">ENTRAR</button>

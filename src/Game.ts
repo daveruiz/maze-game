@@ -71,7 +71,8 @@ export class Game {
   private minimapCanvas:     HTMLCanvasElement;
   private hudEl:             HTMLElement;
   private floorTextEl:       HTMLElement;
-  private enemyIndicatorEl:  HTMLElement;
+  private staminaHudEl!:     HTMLElement;
+  private batteryLowEl!:     HTMLElement;
   private messageEl:         HTMLElement;
   private batteryFillEl!:    HTMLElement;
   private batteryIconEl!:    HTMLElement;
@@ -82,7 +83,6 @@ export class Game {
   private itemCompassEl!:    HTMLElement;
   private keyNeededEl!:      HTMLElement;
   private staminaFillEl!:    HTMLElement;
-  private staminaPctEl!:     HTMLElement;
 
   constructor(container: HTMLElement) {
     this.renderer = new THREE.WebGLRenderer({ antialias: true });
@@ -125,7 +125,8 @@ export class Game {
     // HUD
     this.hudEl            = document.getElementById('hud')!;
     this.floorTextEl      = document.getElementById('floor-text')!;
-    this.enemyIndicatorEl = document.getElementById('enemy-indicator')!;
+    this.staminaHudEl     = document.getElementById('stamina-hud')!;
+    this.batteryLowEl     = document.getElementById('battery-low')!;
     this.messageEl        = document.getElementById('message')!;
     this.batteryFillEl    = document.getElementById('battery-fill')!;
     this.batteryIconEl    = document.getElementById('battery-icon')!;
@@ -140,13 +141,13 @@ export class Game {
     this.itemCompassEl = document.getElementById('item-compass')!;
     this.keyNeededEl   = document.getElementById('key-needed')!;
     this.staminaFillEl = document.getElementById('stamina-fill')!;
-    this.staminaPctEl  = document.getElementById('stamina-pct')!;
 
     // Debug full-bright light (added to scene on demand)
     this.debugAmbient = new THREE.AmbientLight(0xffffff, 6);
 
-    // Flashlight toggle
+    // Flashlight toggle + keyboard reclaims control from gamepad
     document.addEventListener('keydown', e => {
+      this.gamepad.onKeyboardInput();
       if (e.code === 'KeyF' && !e.repeat) this.toggleFlashlight();
       if (e.code === 'Backquote' && !e.repeat) this.toggleDebugMenu();
     });
@@ -333,6 +334,10 @@ export class Game {
     // Scale global ambient per floor — floors 2/3 have brighter materials so need less fill
     const ambientScale = floorIdx === 0 ? 7.0 : 3.0;
     if (this.globalLights[0]) (this.globalLights[0] as THREE.AmbientLight).intensity = ambientScale;
+
+    // Reverb per floor: catacombs = very reverberant, house = moderate, village = open air
+    const reverbLevels = [1.2, 0.65, 0.35];
+    this.audio.setReverbLevel(reverbLevels[floorIdx] ?? 0.3);
   }
 
   private loop = () => {
@@ -462,8 +467,23 @@ export class Game {
       }
     }
 
+    // Track nearest chasing enemy distance
+    let nearestChasingDist = Infinity;
+    if (!this.debugNoEnemy) {
+      for (const enemy of this.enemies) {
+        if (enemy.floorIndex === this.player.floorIndex && enemy.state === EnemyState.CHASING) {
+          const d = enemy.getPosition().distanceTo(pp);
+          if (d < nearestChasingDist) nearestChasingDist = d;
+        }
+      }
+    }
+
     // Update proximity drone
     this.audio.updateProximityDrone(this.debugNoEnemy ? -1 : nearestDist);
+
+    // Chase tension — rising high-pitch shriek
+    const isChasing = nearestChasingDist < Infinity;
+    this.audio.updateChaseTension(isChasing, nearestChasingDist);
 
     // Flashlight (needs nearestDist for proximity flicker)
     this.updateFlashlight(dt, t, nearestDist);
@@ -497,7 +517,8 @@ export class Game {
     this.flashlightOn = true;
     this.flashlight.intensity = 28.0;
     this.torchLight.intensity = 0.6;
-    // Stop player movement & enemy updates by letting the death branch handle rendering
+    // Death audio: explosive stinger + kill chase/drone/enemy sounds
+    this.audio.playDeathStinger();
     this.audio.stopEnemySound();
     this.audio.updateProximityDrone(-1);
   }
@@ -617,23 +638,6 @@ export class Game {
     this.floorTextEl.textContent =
       `PLANTA ${fi + 1} / ${NUM_FLOORS}  —  ${this.maze.floors[fi].theme.name.toUpperCase()}`;
 
-    // Show the most threatening enemy state across all enemies on this floor
-    let worstState: EnemyState = EnemyState.SEARCHING;
-    for (const enemy of this.enemies) {
-      if (enemy.floorIndex !== fi) continue;
-      if (enemy.state === EnemyState.CHASING) { worstState = EnemyState.CHASING; break; }
-      if (enemy.state === EnemyState.SPOTTED) worstState = EnemyState.SPOTTED;
-    }
-    let label = '◉ BUSCANDO', color = '#4af';
-    if (worstState === EnemyState.CHASING) {
-      label = '⬛ PERSIGUIENDO';
-      color = `hsl(${Math.sin(t * 10) > 0 ? 0 : 20}, 100%, 55%)`;
-    } else if (worstState === EnemyState.SPOTTED) {
-      label = '! TE VIO !'; color = '#f80';
-    }
-    this.enemyIndicatorEl.textContent = label;
-    this.enemyIndicatorEl.style.color = color;
-
     // Battery bar
     const pct = this.flashBattery;
     this.batteryFillEl.style.width = `${pct}%`;
@@ -644,12 +648,24 @@ export class Game {
     this.flashStatusEl.style.color = this.flashlightOn ? '#4af' : '#888';
     this.batteryPctEl.textContent = `${Math.round(pct)}%`;
 
-    // Stamina bar
+    // Battery low blinking warning
+    if (pct < 20 && pct > 0 && this.flashlightOn) {
+      const blink = Math.sin(t * 6) > 0;
+      this.batteryLowEl.style.opacity = blink ? '1' : '0';
+    } else {
+      this.batteryLowEl.style.opacity = '0';
+    }
+
+    // Stamina bar — only visible below 50%, centered under crosshair
     const stam = this.player.stamina;
-    this.staminaFillEl.style.width = `${stam}%`;
-    this.staminaFillEl.style.background =
-      stam > 50 ? '#4f8' : stam > 20 ? '#fa4' : '#f44';
-    this.staminaPctEl.textContent = `${Math.round(stam)}%`;
+    if (stam < 50) {
+      this.staminaHudEl.style.display = 'block';
+      this.staminaFillEl.style.width = `${stam * 2}%`;  // scale: 50% stamina = 100% bar width
+      this.staminaFillEl.style.background =
+        stam > 25 ? '#fa4' : '#f44';
+    } else {
+      this.staminaHudEl.style.display = 'none';
+    }
 
     this.updateItemsHUD();
     this.drawMinimap();

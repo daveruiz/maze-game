@@ -14,15 +14,17 @@ Then he turned thirteen.
 
 At first, it was subtle. The grunts. The eye rolls. The way he'd appear in the kitchen at midnight demanding food — not asking, *demanding* — like some kind of creature risen from the depths. His room became a forbidden catacomb: dark, foul-smelling, and full of unspeakable things.
 
-By fourteen, the transformation was complete. The sweet boy was gone. In his place stood something else entirely — a towering, ravenous beast fueled by hormones and Wi-Fi, roaming the house at all hours, hunting you down with a single, terrifying purpose:
+By fourteen, the transformation was complete. The sweet boy was gone. In his place stood something else entirely — a towering, ravenous beast fueled by hormones and Wi-Fi, roaming the house at all hours, hunting you down with a single, terrifying demand:
 
-*"Dad. I need money."*
+*"Dad. Unlock the computer."*
 
-There is no reasoning with him. There is no negotiation. He can hear the sound of a wallet opening from three floors away. He can smell fear. And he is *always* hungry.
+There is no reasoning with him. There is no negotiation. He can hear the sound of a laptop opening from three floors away. He can sense a password being typed. And he will *never* stop asking.
 
-Your only hope? Run. Hide in the darkness. Turn off your flashlight so he can't find you. Navigate the increasingly chaotic maze that your home has become — from the tight, suffocating **catacombs** of the basement where you've been hiding your emergency snacks, through the sprawling **haunted house** that used to be your peaceful home, and into the vast, abandoned **village** outside where other fathers have already fled.
+*"Just five more minutes."* *"I need it for homework."* *"PLEASE, Dad. PLEASE."*
 
-He is out there. He is getting faster. And he brought friends.
+Your only hope? Run. Hide in the darkness. Turn off your flashlight so he can't find you. Navigate the increasingly chaotic maze that your home has become — from the tight, suffocating **basement** where you've been hiding with the router, through the sprawling **haunted house** that used to be your peaceful home, and into the vast, abandoned **village** outside where other fathers have already fled.
+
+He is out there. He is getting faster. And he brought friends — all of them need the Wi-Fi password.
 
 *Good luck, Papa.*
 
@@ -32,7 +34,7 @@ This is a personal project made for fun and learning. Navigate through three inc
 
 ### Floors
 
-- **Catacumbas** — tight recursive maze with obstacles
+- **Sótano** — tight recursive maze with obstacles
 - **La Casa** — a sprawling haunted house with rooms and corridors (2x size)
 - **El Pueblo** — a massive abandoned village with dead ends and narrow alleys (5x size)
 
@@ -49,11 +51,23 @@ This is a personal project made for fun and learning. Navigate through three inc
 
 ### Controls
 
+**Keyboard + Mouse**
 - **WASD / Arrow keys** — Move
 - **Mouse** — Look around
+- **Shift** — Sprint
 - **Space** — Jump
 - **F** — Toggle flashlight
-- **L** — Debug lighting (dev)
+
+**Gamepad**
+- **Left stick** — Move (L3 press to sprint)
+- **Right stick** — Look around
+- **A / Cross** — Jump
+- **X / Square** — Toggle flashlight
+
+**Touch** (auto-detected)
+- **Left side** — Virtual joystick (push to edge to sprint)
+- **Right side** — Drag to look around
+- **Buttons** — Jump & Flashlight
 
 ## Tech Stack
 

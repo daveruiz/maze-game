@@ -21,7 +21,7 @@ export const OBSTACLE_HEIGHT = 0.85;
 
 const THEMES: FloorTheme[] = [
   {
-    name: 'Catacumbas',
+    name: 'Sótano',
     wallColor:    0x3d2b1f,
     floorColor:   0x1a1210,
     ceilColor:    0x0d0908,
@@ -855,15 +855,6 @@ export class MazeRenderer {
       stairGroup.add(m);
       this.stairMeshes.push(m);
     }
-
-    // Side railings
-    const railGeo = new THREE.BoxGeometry(0.1, WALL_HEIGHT * 0.6, CELL_SIZE);
-    const railMat = new THREE.MeshLambertMaterial({ color: 0x332211 });
-    [-stepW / 2 - 0.1, stepW / 2 + 0.1].forEach(ox => {
-      const r = new THREE.Mesh(railGeo, railMat);
-      r.position.set(ox, yBase + WALL_HEIGHT * 0.3, 0);
-      stairGroup.add(r);
-    });
 
     stairGroup.rotation.y = rotation;
     group.add(stairGroup);
