@@ -26,6 +26,9 @@ const INVESTIGATE_RADIUS   = 8;   // pick cells within this radius of last known
 // Alert system
 const ALERT_RANGE = 30; // world units — other enemies within this get alerted
 
+// Sound occlusion — recomputed every ~1s, not every frame
+const SOUND_OCCLUSION_INTERVAL = 0.8; // seconds between BFS recalculations
+
 export class Enemy {
   mesh!: THREE.Mesh;
   private scene: THREE.Scene;
@@ -69,6 +72,11 @@ export class Enemy {
   private playerHint: THREE.Vector3 = new THREE.Vector3();
   // Track last patrol target to ensure diversity (go far from where we just were)
   private lastPatrolCell: { x: number; z: number } | null = null;
+
+  // Sound occlusion — cached BFS results for audio direction + wall count
+  private soundOcclusionTimer = 0;
+  private soundWallCount = 0;
+  private soundVirtualPos: THREE.Vector3 = new THREE.Vector3();
 
   // Directional sprites
   private texFront!: THREE.Texture;
@@ -210,6 +218,9 @@ export class Enemy {
     this.pos.y += 1.28;
     this.mesh.position.copy(this.pos);
     this.stuckCheckPos.copy(this.pos);
+    this.soundVirtualPos.copy(this.pos);
+    this.soundWallCount = 0;
+    this.soundOcclusionTimer = 0;
     this.state = EnemyState.SEARCHING;
   }
 
@@ -337,11 +348,147 @@ export class Enemy {
 
     this.updateSpriteDirection(toCamera);
 
-    // Update audio position
-    this.audio.setChannelPosition(this.channelId, this.pos.x, this.pos.y, this.pos.z);
+    // ── Audio occlusion: BFS-based sound direction + wall count ────────
+    this.soundOcclusionTimer += dt;
+    if (this.soundOcclusionTimer >= SOUND_OCCLUSION_INTERVAL) {
+      this.soundOcclusionTimer = 0;
+      this.updateSoundOcclusion(playerPos);
+    }
+
+    // Position the panner at the virtual sound arrival point (not the enemy's real position)
+    this.audio.setChannelPosition(
+      this.channelId,
+      this.soundVirtualPos.x, this.soundVirtualPos.y, this.soundVirtualPos.z
+    );
+    this.audio.updateChannelOcclusion(this.channelId, distToPlayer, this.soundWallCount);
 
     // Caught?
     return distToPlayer < CATCH_DISTANCE;
+  }
+
+  /** Compute BFS-based sound occlusion: wall count + arrival direction.
+   *  The virtual sound position is placed in the direction of the first BFS step
+   *  (the corridor opening the sound travels through), at the real distance. */
+  private updateSoundOcclusion(playerPos: THREE.Vector3) {
+    const fi = this.floorIndex;
+    const floor = this.maze.floors[fi];
+    if (!floor) {
+      this.soundVirtualPos.copy(this.pos);
+      this.soundWallCount = 0;
+      return;
+    }
+
+    const playerCell = this.maze.worldToCell(playerPos.x, playerPos.z, fi);
+    const enemyCell = this.maze.worldToCell(this.pos.x, this.pos.z, fi);
+
+    // Quick BFS from player to enemy — we need the path to count walls
+    // and get the first step direction
+    const W = floor.width, H = floor.height;
+    const inBounds = (x: number, z: number) => x >= 0 && x < W && z >= 0 && z < H;
+    type Node = { x: number; z: number; parent: Node | null };
+    const visited = new Set<string>();
+    const queue: Node[] = [{ x: playerCell.x, z: playerCell.z, parent: null }];
+    visited.add(`${playerCell.x},${playerCell.z}`);
+    let found: Node | null = null;
+
+    while (queue.length > 0) {
+      const cur = queue.shift()!;
+      if (cur.x === enemyCell.x && cur.z === enemyCell.z) {
+        found = cur;
+        break;
+      }
+      const cell = floor.cells[cur.z]?.[cur.x];
+      if (!cell) continue;
+
+      const neighbors: { x: number; z: number }[] = [];
+      if (inBounds(cur.x, cur.z - 1) && (!cell.walls.N || !floor.cells[cur.z - 1]?.[cur.x]?.walls.S)) neighbors.push({ x: cur.x, z: cur.z - 1 });
+      if (inBounds(cur.x, cur.z + 1) && (!cell.walls.S || !floor.cells[cur.z + 1]?.[cur.x]?.walls.N)) neighbors.push({ x: cur.x, z: cur.z + 1 });
+      if (inBounds(cur.x + 1, cur.z) && (!cell.walls.E || !floor.cells[cur.z]?.[cur.x + 1]?.walls.W)) neighbors.push({ x: cur.x + 1, z: cur.z });
+      if (inBounds(cur.x - 1, cur.z) && (!cell.walls.W || !floor.cells[cur.z]?.[cur.x - 1]?.walls.E)) neighbors.push({ x: cur.x - 1, z: cur.z });
+
+      for (const n of neighbors) {
+        const key = `${n.x},${n.z}`;
+        if (!visited.has(key)) {
+          visited.add(key);
+          queue.push({ ...n, parent: cur });
+        }
+      }
+    }
+
+    if (!found) {
+      // No path — use direct position (enemy might be unreachable)
+      this.soundVirtualPos.copy(this.pos);
+      this.soundWallCount = 10; // max muffle
+      return;
+    }
+
+    // Trace back the path to count walls crossed and get the first step
+    const pathCells: { x: number; z: number }[] = [];
+    let node: Node | null = found;
+    while (node) {
+      pathCells.unshift({ x: node.x, z: node.z });
+      node = node.parent;
+    }
+
+    // Count wall crossings along the DIRECT line (not BFS path)
+    // This tells us how many walls the sound actually has to go through
+    let wallCount = 0;
+    const dx = this.pos.x - playerPos.x;
+    const dz = this.pos.z - playerPos.z;
+    const directDist = Math.sqrt(dx * dx + dz * dz);
+    if (directDist > 0.5) {
+      const stepSize = CELL_SIZE * 0.45;
+      const steps = Math.ceil(directDist / stepSize);
+      let prevCX = Math.round(playerPos.x / CELL_SIZE);
+      let prevCZ = Math.round(playerPos.z / CELL_SIZE);
+      for (let i = 1; i <= steps; i++) {
+        const t = i / steps;
+        const px = playerPos.x + dx * t;
+        const pz = playerPos.z + dz * t;
+        const cx = Math.round(px / CELL_SIZE);
+        const cz = Math.round(pz / CELL_SIZE);
+        if (cx !== prevCX || cz !== prevCZ) {
+          if (cx >= 0 && cx < W && cz >= 0 && cz < H) {
+            const prevCell = floor.cells[prevCZ]?.[prevCX];
+            const curCell = floor.cells[cz]?.[cx];
+            if (prevCell && curCell) {
+              if (cx > prevCX && (prevCell.walls.E || curCell.walls.W)) wallCount++;
+              if (cx < prevCX && (prevCell.walls.W || curCell.walls.E)) wallCount++;
+              if (cz > prevCZ && (prevCell.walls.S || curCell.walls.N)) wallCount++;
+              if (cz < prevCZ && (prevCell.walls.N || curCell.walls.S)) wallCount++;
+            }
+          }
+          prevCX = cx;
+          prevCZ = cz;
+        }
+      }
+    }
+    this.soundWallCount = wallCount;
+
+    // Determine sound arrival direction from the first 1-2 BFS steps
+    // This is the corridor opening the sound comes through
+    const realDist = this.pos.distanceTo(playerPos);
+    if (pathCells.length >= 2) {
+      // Get the direction from player toward the first BFS step
+      const step = pathCells.length >= 3 ? pathCells[2] : pathCells[1];
+      const stepWorld = this.maze.cellToWorld(step.x, step.z, fi);
+      const dirX = stepWorld.x - playerPos.x;
+      const dirZ = stepWorld.z - playerPos.z;
+      const dirLen = Math.sqrt(dirX * dirX + dirZ * dirZ);
+      if (dirLen > 0.01) {
+        // Place virtual source in the arrival direction, at the real distance
+        this.soundVirtualPos.set(
+          playerPos.x + (dirX / dirLen) * realDist,
+          this.pos.y,
+          playerPos.z + (dirZ / dirLen) * realDist
+        );
+      } else {
+        this.soundVirtualPos.copy(this.pos);
+      }
+    } else {
+      // Same cell or adjacent — use real position
+      this.soundVirtualPos.copy(this.pos);
+    }
   }
 
   /** Alert nearby siblings that the player was spotted */

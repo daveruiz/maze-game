@@ -15,11 +15,15 @@ const CHASING_MAX_INTERVAL = 5;
 
 const PLAYBACK_RATE = 0.75;
 
-/** One audio channel per enemy — own panner, own loop, own one-shot */
+/** One audio channel per enemy — own panner, own loop, own one-shot.
+ *  Each channel splits into dry (direct) and wet (reverb send) paths,
+ *  with the mix controlled by distance to the listener. */
 class EnemyChannel {
   panner: PannerNode;
   private ctx: AudioContext;
-  private master: GainNode;
+  private dryGain: GainNode;
+  private wetGain: GainNode;
+  private occlusionFilter: BiquadFilterNode;
 
   // Procedural loop
   private loop: AudioBufferSourceNode | null = null;
@@ -32,9 +36,13 @@ class EnemyChannel {
   private nextTriggerTime: number = 0;
   private currentState: string = '';
 
-  constructor(ctx: AudioContext, master: GainNode) {
+  // Smoothed occlusion values (avoid clicks from sudden changes)
+  private currentDry = 1.0;
+  private currentWet = 0.1;
+  private currentCutoff = 20000;
+
+  constructor(ctx: AudioContext, master: GainNode, reverbBus: GainNode) {
     this.ctx = ctx;
-    this.master = master;
 
     this.panner = ctx.createPanner();
     this.panner.panningModel = 'HRTF';
@@ -42,7 +50,56 @@ class EnemyChannel {
     this.panner.refDistance = 4;
     this.panner.maxDistance = 60;
     this.panner.rolloffFactor = 1.5;
-    this.panner.connect(master);
+
+    // Low-pass filter for wall occlusion muffle
+    this.occlusionFilter = ctx.createBiquadFilter();
+    this.occlusionFilter.type = 'lowpass';
+    this.occlusionFilter.frequency.value = 20000; // wide open by default
+    this.occlusionFilter.Q.value = 0.7;
+
+    // Dry path: panner → filter → dryGain → master (direct/close sound)
+    this.dryGain = ctx.createGain();
+    this.dryGain.gain.value = 1.0;
+    this.panner.connect(this.occlusionFilter).connect(this.dryGain).connect(master);
+
+    // Wet path: panner → wetGain → shared reverb bus (distant/reverberant)
+    // Wet path bypasses the occlusion filter — reverb tail is naturally diffuse
+    this.wetGain = ctx.createGain();
+    this.wetGain.gain.value = 0.1;
+    this.panner.connect(this.wetGain).connect(reverbBus);
+  }
+
+  /** Update occlusion based on distance + wall count between player and enemy.
+   *  Walls add muffle (low-pass) + push dry→wet. Distance also contributes. */
+  updateOcclusion(dist: number, wallCount: number) {
+    const SMOOTH = 0.08; // lerp speed per call (~frame rate)
+
+    // ── Distance contribution ──
+    const MIN_DIST = 3, MAX_DIST = 40;
+    const distT = Math.max(0, Math.min(1, (dist - MIN_DIST) / (MAX_DIST - MIN_DIST)));
+
+    // ── Wall contribution (each wall adds significant muffle + reverb) ──
+    const wallT = Math.min(1, wallCount / 6); // 6+ walls = fully occluded
+
+    // Combined occlusion factor (walls dominate, distance adds to it)
+    const occlusion = Math.min(1, wallT * 0.7 + distT * 0.4);
+
+    // Dry/wet: more occlusion = less dry, more reverb
+    const targetDry = 1.0 - occlusion * 0.75;     // 1.0 → 0.25
+    const targetWet = 0.1 + occlusion * 1.2;       // 0.1 → 1.3
+
+    // Low-pass cutoff: walls muffle high frequencies
+    // 0 walls = 20kHz (open), 6+ walls = ~800Hz (very muffled)
+    const targetCutoff = 20000 * Math.pow(0.25, wallT); // exponential: 20k → ~1.25k
+
+    // Smooth toward targets
+    this.currentDry    += (targetDry - this.currentDry) * SMOOTH;
+    this.currentWet    += (targetWet - this.currentWet) * SMOOTH;
+    this.currentCutoff += (targetCutoff - this.currentCutoff) * SMOOTH;
+
+    this.dryGain.gain.value = this.currentDry;
+    this.wetGain.gain.value = this.currentWet;
+    this.occlusionFilter.frequency.value = this.currentCutoff;
   }
 
   setPosition(x: number, y: number, z: number) {
@@ -202,6 +259,7 @@ export class AudioManager {
   private ctx: AudioContext | null = null;
   private masterGain!: GainNode;
   private reverbSend!: GainNode;
+  private enemyReverbBus!: GainNode; // shared reverb bus for per-enemy distance reverb
   private shared: SharedBuffers = {
     searchingBuf: null, chasingBuf: null, alertBuf: null, deathGrowlBuf: null,
     idleMp3s: [], chasingMp3s: [],
@@ -216,8 +274,8 @@ export class AudioManager {
     this.masterGain = this.ctx.createGain();
     this.masterGain.gain.value = 0.2;
 
-    // Reverb send: master → convolver → wet gain → destination
-    //              master → dry (direct) → destination
+    // Global reverb: master → convolver → wet gain → destination
+    //                master → dry (direct) → destination
     const convolver = this.ctx.createConvolver();
     convolver.buffer = this.generateImpulseResponse(1.6, 5.0);
 
@@ -232,6 +290,14 @@ export class AudioManager {
 
     // Keep reference so we can adjust reverb per floor
     this.reverbSend = wetGain;
+
+    // Per-enemy distance reverb bus: enemy wet sends → convolver → destination
+    // Uses a longer, more diffuse impulse for that "distant echo" effect
+    const enemyConvolver = this.ctx.createConvolver();
+    enemyConvolver.buffer = this.generateImpulseResponse(2.5, 3.5);
+    this.enemyReverbBus = this.ctx.createGain();
+    this.enemyReverbBus.gain.value = 1.0;
+    this.enemyReverbBus.connect(enemyConvolver).connect(this.ctx.destination);
 
     // Generate procedural buffers
     this.shared.searchingBuf = this.makeSearchingBuffer();
@@ -315,7 +381,7 @@ export class AudioManager {
   createChannel(): number {
     if (!this.ctx) return -1;
     const id = this.nextChannelId++;
-    const ch = new EnemyChannel(this.ctx, this.masterGain);
+    const ch = new EnemyChannel(this.ctx, this.masterGain, this.enemyReverbBus);
     this.channels.set(id, ch);
     return id;
   }
@@ -323,6 +389,11 @@ export class AudioManager {
   /** Update position of an enemy channel */
   setChannelPosition(id: number, x: number, y: number, z: number) {
     this.channels.get(id)?.setPosition(x, y, z);
+  }
+
+  /** Update per-enemy sound occlusion (distance + wall count → reverb mix + muffle) */
+  updateChannelOcclusion(id: number, dist: number, wallCount: number) {
+    this.channels.get(id)?.updateOcclusion(dist, wallCount);
   }
 
   /** Update state of an enemy channel */
