@@ -1,5 +1,5 @@
 import { Game } from './Game';
-import { isMobileDevice } from './MobileControls';
+import { inputMode } from './InputMode';
 
 const container = document.getElementById('canvas-container')!;
 const overlay   = document.getElementById('overlay')!;
@@ -7,13 +7,20 @@ const startBtn  = document.getElementById('start-btn')!;
 const hud       = document.getElementById('hud')!;
 
 let game: Game | null = null;
-const mobile = isMobileDevice();
 
-// On mobile, hide desktop-only controls text and update start flow
-if (mobile) {
+// Install input-mode detection early so first touch/mouse is caught
+inputMode.install();
+
+// React to input-mode switches
+inputMode.onChange((mode) => {
   const controlsList = overlay.querySelector('.controls-list') as HTMLElement;
-  if (controlsList) controlsList.style.display = 'none';
-}
+  if (controlsList) controlsList.style.display = mode === 'touch' ? 'none' : '';
+
+  // Release pointer lock when switching to touch
+  if (mode === 'touch' && document.pointerLockElement) {
+    document.exitPointerLock();
+  }
+});
 
 startBtn.addEventListener('click', () => {
   overlay.style.display = 'none';
@@ -27,11 +34,25 @@ startBtn.addEventListener('click', () => {
   }
 });
 
-// Desktop: click on canvas re-acquires pointer lock
-if (!mobile) {
-  container.addEventListener('click', () => {
-    if (game && !document.pointerLockElement) {
-      document.body.requestPointerLock();
-    }
-  });
+// Mouse mode: click on canvas re-acquires pointer lock
+container.addEventListener('click', () => {
+  if (game && !inputMode.isTouch && !document.pointerLockElement) {
+    document.body.requestPointerLock();
+  }
+});
+
+// Gamepad: poll for A button press to click start/restart when overlay is visible
+let gpPrevA = false;
+function pollGamepadForMenu() {
+  requestAnimationFrame(pollGamepadForMenu);
+  if (overlay.style.display === 'none') { gpPrevA = false; return; }
+
+  const gamepads = navigator.getGamepads?.() ?? [];
+  let a = false;
+  for (const gp of gamepads) {
+    if (gp?.connected && gp.buttons[0]?.pressed) { a = true; break; }
+  }
+  if (a && !gpPrevA) startBtn.click();
+  gpPrevA = a;
 }
+pollGamepadForMenu();

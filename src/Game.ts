@@ -9,7 +9,9 @@ import { Item, ItemType } from './Item';
 import { AudioManager } from './AudioManager';
 import { EnemyState } from './types';
 import { HorrorShader } from './HorrorShader';
-import { MobileControls, isMobileDevice } from './MobileControls';
+import { MobileControls } from './MobileControls';
+import { inputMode, isMobileDevice } from './InputMode';
+import { GamepadManager } from './GamepadManager';
 
 const NUM_FLOORS = 3;
 
@@ -44,6 +46,7 @@ export class Game {
   private debugAmbient!: THREE.AmbientLight;
   private debugMenuOpen = false;
   private mobileControls: MobileControls | null = null;
+  private gamepad: GamepadManager;
 
   // Floor culling
   private currentVisibleFloor = -1;
@@ -150,6 +153,14 @@ export class Game {
 
     this.setupDebugMenu();
 
+    // Input mode detection (touch vs mouse — switches dynamically)
+    inputMode.install();
+
+    // Gamepad support
+    this.gamepad = new GamepadManager({
+      toggleFlashlight: () => this.toggleFlashlight()
+    });
+
     window.addEventListener('resize', this.onResize.bind(this));
   }
 
@@ -234,19 +245,26 @@ export class Game {
 
     this.hudEl.style.display = 'block';
 
-    // Mobile: touch controls instead of pointer lock
-    if (isMobileDevice()) {
-      if (!this.mobileControls) {
-        this.mobileControls = new MobileControls(this.player, {
-          toggleFlashlight: () => this.toggleFlashlight()
-        });
-        this.mobileControls.init();
-      } else {
-        // Update player reference (restart creates a new Player)
-        this.mobileControls.setPlayer(this.player);
-      }
-      this.mobileControls.showCTAIfNeeded();
+    // Touch controls (always init — they show/hide reactively based on input mode)
+    if (!this.mobileControls) {
+      this.mobileControls = new MobileControls(this.player, {
+        toggleFlashlight: () => this.toggleFlashlight()
+      });
+      this.mobileControls.init();
     } else {
+      this.mobileControls.setPlayer(this.player);
+    }
+
+    // Gamepad: update player reference
+    this.gamepad.setPlayer(this.player);
+
+    // Fullscreen CTA only on actual mobile hardware
+    if (isMobileDevice()) {
+      this.mobileControls.showCTAIfNeeded();
+    }
+
+    // Desktop mouse: request pointer lock
+    if (!inputMode.isTouch) {
       this.player.requestLock();
     }
 
@@ -330,18 +348,20 @@ export class Game {
       const vhs = Math.min(1.0, this.deathTimer / 2.0);
       this.horrorPass.uniforms['vhsIntensity'].value = vhs;
 
-      // Rotate camera to face the enemy that caught us
+      // Rotate camera to face the enemy's face (3/4 height)
       if (this.deathEnemy) {
         const ep = this.deathEnemy.getPosition();
         const pp = this.player.getPosition();
         const dx = ep.x - pp.x, dz = ep.z - pp.z;
         const targetYaw = Math.atan2(-dx, -dz);
-        const dy = ep.y - pp.y;
+        // Aim at 3/4 of enemy height (face level)
+        const faceY = ep.y + 0.5;  // offset up toward face
+        const dy = faceY - pp.y;
         const hDist = Math.sqrt(dx * dx + dz * dz);
         const targetPitch = Math.atan2(dy, hDist);
 
-        // Smoothly rotate toward enemy
-        const lerpSpeed = 3.0 * dt;
+        // Smoothly rotate toward enemy (fast snap)
+        const lerpSpeed = 12.0 * dt;
         // Shortest rotation path for yaw
         let yawDiff = targetYaw - this.deathYaw;
         if (yawDiff > Math.PI) yawDiff -= 2 * Math.PI;
@@ -354,22 +374,37 @@ export class Game {
         this.camera.rotation.x = this.deathPitch;
       }
 
+      // Slow zoom in: FOV narrows from 75 → 45 over the death duration
+      const zoomProgress = Math.min(1.0, this.deathTimer / 2.5);
+      this.camera.fov = 75 - 30 * zoomProgress;
+      this.camera.updateProjectionMatrix();
+
       this.horrorPass.uniforms['time'].value = t;
       this.composer.render();
 
       if (this.deathTimer >= 2.5) {
         this.dying = false;
         this.horrorPass.uniforms['vhsIntensity'].value = 0;
+        // Restore FOV
+        this.camera.fov = 75;
+        this.camera.updateProjectionMatrix();
         this.endGame();
       }
       return;
     }
 
-    // Mobile: sync virtual controls before player tick
+    // Sync virtual controls before player tick (touch + gamepad)
     this.mobileControls?.update();
+    this.gamepad.update();
 
     // Player
     const { stairsUp, isExit } = this.player.update(dt);
+
+    // Sprint FOV: widen to 85 when sprinting, smoothly lerp back to 75
+    const targetFov = this.player.sprinting ? 85 : 75;
+    this.camera.fov += (targetFov - this.camera.fov) * Math.min(1, 8 * dt);
+    this.camera.updateProjectionMatrix();
+
     const fi = this.player.floorIndex;
     const pp  = this.player.getPosition();
     const fwd = this.player.getForwardDirection();
@@ -458,6 +493,10 @@ export class Game {
     // Capture current camera rotation as starting point
     this.deathYaw = this.camera.rotation.y;
     this.deathPitch = this.camera.rotation.x;
+    // Force flashlight on so the monster is visible
+    this.flashlightOn = true;
+    this.flashlight.intensity = 28.0;
+    this.torchLight.intensity = 0.6;
     // Stop player movement & enemy updates by letting the death branch handle rendering
     this.audio.stopEnemySound();
     this.audio.updateProximityDrone(-1);

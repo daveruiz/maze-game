@@ -1,9 +1,8 @@
 import { Player } from './Player';
+import { inputMode, isMobileDevice } from './InputMode';
 
-// ── Detection ──────────────────────────────────────────────────────────────
-export function isMobileDevice(): boolean {
-  return 'ontouchstart' in window && /Mobi|Android|iPhone|iPad/i.test(navigator.userAgent);
-}
+// Re-export for backward compat
+export { isMobileDevice };
 
 // ── Constants ──────────────────────────────────────────────────────────────
 const JOYSTICK_SIZE      = 130;
@@ -12,7 +11,6 @@ const DEAD_ZONE          = 12;      // px before movement registers
 const SPRINT_THRESHOLD   = 0.80;    // joystick tilt % to auto-sprint
 const LOOK_SENSITIVITY   = 0.01;
 const BTN_SIZE           = 58;
-const BTN_GAP            = 14;
 
 // ── Mobile Controls ────────────────────────────────────────────────────────
 export class MobileControls {
@@ -58,15 +56,44 @@ export class MobileControls {
     this.buildControls();
     this.attachTouchListeners();
     this.attachFullscreenListeners();
+
+    // React to input-mode switches
+    inputMode.onChange((mode) => {
+      if (mode === 'touch') {
+        this.show();
+      } else {
+        this.hide();
+      }
+    });
+
+    // Initial state based on current mode
+    if (inputMode.isTouch) this.show(); else this.hide();
+  }
+
+  show() {
+    this.container.style.display = 'block';
+    // Hide crosshair on touch
+    const ch = document.getElementById('crosshair');
+    if (ch) ch.style.display = 'none';
+  }
+
+  hide() {
+    this.container.style.display = 'none';
+    // Restore crosshair on mouse
+    const ch = document.getElementById('crosshair');
+    if (ch) ch.style.display = '';
+    // Clear any held virtual keys
+    this.resetState();
   }
 
   /** Call every frame before player.update() */
   update() {
+    if (!inputMode.isTouch) return;
+
     const mag = Math.sqrt(this.joyVecX * this.joyVecX + this.joyVecY * this.joyVecY);
 
     // Movement keys from joystick angle
     const moving = mag > 0;
-    const angle  = Math.atan2(this.joyVecX, -this.joyVecY); // 0 = forward
 
     const fwd   = moving && this.joyVecY < -0.35;
     const back  = moving && this.joyVecY >  0.35;
@@ -85,11 +112,14 @@ export class MobileControls {
   destroy() {
     this.container?.remove();
     this.ctaOverlay?.remove();
+    this.resetState();
+  }
+
+  private resetState() {
     this.joyVecX = 0;
     this.joyVecY = 0;
     this.joystickTouchId = null;
     this.lookTouchId = null;
-    // Clear all virtual keys
     for (const k of ['KeyW','KeyS','KeyA','KeyD','ShiftLeft']) {
       this.player.setKey(k, false);
     }
@@ -100,7 +130,7 @@ export class MobileControls {
   private buildCSS() {
     const style = document.createElement('style');
     style.textContent = `
-      /* Mobile controls — only visible on touch devices */
+      /* Mobile controls — shown dynamically when touch input detected */
       #mobile-controls {
         position: fixed; top: 0; left: 0;
         width: 100%; height: 100%;
@@ -110,6 +140,7 @@ export class MobileControls {
         user-select: none;
         -webkit-user-select: none;
         opacity: 0.5;
+        display: none;
       }
       #mobile-controls * { touch-action: none; }
 
@@ -139,7 +170,7 @@ export class MobileControls {
         transition: none;
       }
 
-      /* Action buttons — arc layout, positions are from screen bottom-right corner */
+      /* Action buttons — stacked vertically at mid-screen right */
       #mobile-buttons {
         position: absolute; top: 0; left: 0;
         width: 100%; height: 100%;
@@ -149,9 +180,10 @@ export class MobileControls {
         position: absolute;
         pointer-events: auto;
       }
-      /* Arc: right thumb pivots from bottom-right, sweep goes up-left */
-      #btn-mobile-jump      { bottom: 30px;  right: 20px; }  /* easiest reach */
-      #btn-mobile-flashlight { bottom: 90px;  right: 75px; }  /* upper arc */
+      /* Top button (flashlight): vertically centered, closer to edge */
+      #btn-mobile-flashlight { top: calc(50% - ${BTN_SIZE + 10}px); right: 20px; }
+      /* Bottom button (jump): just below center, slightly more inset for thumb arc */
+      #btn-mobile-jump       { top: calc(50% + 10px);              right: 36px; }
       .mobile-btn {
         width: ${BTN_SIZE}px; height: ${BTN_SIZE}px;
         border-radius: 50%;
@@ -230,11 +262,6 @@ export class MobileControls {
         font-size: 0.75rem; color: #666;
         margin-top: 10px; letter-spacing: 1px;
       }
-
-      /* Hide crosshair on mobile */
-      @media (pointer: coarse) {
-        #crosshair { display: none !important; }
-      }
     `;
     document.head.appendChild(style);
   }
@@ -291,10 +318,10 @@ export class MobileControls {
   private attachFullscreenListeners() {
     const update = () => {
       const isFS = !!(document.fullscreenElement || (document as any).webkitFullscreenElement);
-      // Only show CTA if game overlay is hidden (game is active) and not fullscreen
+      // Only show CTA on actual mobile hardware, when game is active and not fullscreen
       const gameOverlay = document.getElementById('overlay');
       const gameActive = gameOverlay?.style.display === 'none';
-      if (gameActive && !isFS && this.supportsFullscreen()) {
+      if (gameActive && !isFS && isMobileDevice() && this.supportsFullscreen()) {
         this.ctaOverlay.style.display = 'flex';
       } else {
         this.ctaOverlay.style.display = 'none';
@@ -303,7 +330,6 @@ export class MobileControls {
     document.addEventListener('fullscreenchange', update);
     document.addEventListener('webkitfullscreenchange', update);
 
-    // Also check when game starts (called from showCTAIfNeeded)
     (this as any)._checkFullscreen = update;
   }
 
@@ -315,7 +341,7 @@ export class MobileControls {
   /** Call when game transitions to active state */
   showCTAIfNeeded() {
     const isFS = !!(document.fullscreenElement || (document as any).webkitFullscreenElement);
-    if (!isFS && this.supportsFullscreen()) {
+    if (!isFS && isMobileDevice() && this.supportsFullscreen()) {
       this.ctaOverlay.style.display = 'flex';
     }
   }
