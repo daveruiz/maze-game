@@ -270,12 +270,22 @@ export class AudioManager {
   init() {
     this.ctx = new AudioContext();
 
-    // Master volume → destination
+    // Master volume (doubled from 0.2)
     this.masterGain = this.ctx.createGain();
-    this.masterGain.gain.value = 0.2;
+    this.masterGain.gain.value = 0.4;
 
-    // Global reverb: master → convolver → wet gain → destination
-    //                master → dry (direct) → destination
+    // Soft compressor on the final output — glues everything together,
+    // tames peaks from layered sounds without squashing dynamics
+    const compressor = this.ctx.createDynamicsCompressor();
+    compressor.threshold.value = -18;  // start compressing at -18dB
+    compressor.knee.value = 12;        // soft knee — gentle transition
+    compressor.ratio.value = 3;        // 3:1 — moderate, not brick-wall
+    compressor.attack.value = 0.01;    // 10ms — let transients through
+    compressor.release.value = 0.25;   // 250ms — smooth release
+    compressor.connect(this.ctx.destination);
+
+    // Global reverb: master → convolver → wet gain → compressor
+    //                master → dry (direct) → compressor
     const convolver = this.ctx.createConvolver();
     convolver.buffer = this.generateImpulseResponse(1.6, 5.0);
 
@@ -285,8 +295,8 @@ export class AudioManager {
     const dryGain = this.ctx.createGain();
     dryGain.gain.value = 1.0;
 
-    this.masterGain.connect(dryGain).connect(this.ctx.destination);
-    this.masterGain.connect(convolver).connect(wetGain).connect(this.ctx.destination);
+    this.masterGain.connect(dryGain).connect(compressor);
+    this.masterGain.connect(convolver).connect(wetGain).connect(compressor);
 
     // Keep reference so we can adjust reverb per floor
     this.reverbSend = wetGain;
@@ -297,7 +307,7 @@ export class AudioManager {
     enemyConvolver.buffer = this.generateImpulseResponse(2.5, 3.5);
     this.enemyReverbBus = this.ctx.createGain();
     this.enemyReverbBus.gain.value = 1.0;
-    this.enemyReverbBus.connect(enemyConvolver).connect(this.ctx.destination);
+    this.enemyReverbBus.connect(enemyConvolver).connect(compressor);
 
     // Generate procedural buffers
     this.shared.searchingBuf = this.makeSearchingBuffer();
@@ -512,6 +522,156 @@ export class AudioManager {
     // Smooth toward target
     this.droneCurrent += (this.droneTarget - this.droneCurrent) * 0.05;
     this.droneGain.gain.value = this.droneCurrent;
+  }
+
+  // ── Proximity tension (low-pitch growl — one octave below chase shriek) ───
+
+  private proxOsc1: OscillatorNode | null = null;
+  private proxOsc2: OscillatorNode | null = null;
+  private proxOsc3: OscillatorNode | null = null;
+  private proxOsc4: OscillatorNode | null = null;
+  private proxGain: GainNode | null = null;
+  private proxNoiseGain: GainNode | null = null;
+  private proxNoiseSource: AudioBufferSourceNode | null = null;
+  private proxFilter: BiquadFilterNode | null = null;
+  private proxPitch = 0;
+  private proxVolume = 0;
+
+  private initProximityLayer() {
+    if (!this.ctx || this.proxOsc1) return;
+
+    const BASE_FREQ = 200; // one octave below chase (400Hz)
+
+    this.proxOsc1 = this.ctx.createOscillator();
+    this.proxOsc1.type = 'sawtooth';
+    this.proxOsc1.frequency.value = BASE_FREQ;
+
+    this.proxOsc2 = this.ctx.createOscillator();
+    this.proxOsc2.type = 'sawtooth';
+    this.proxOsc2.frequency.value = BASE_FREQ + 1.5;
+
+    this.proxOsc3 = this.ctx.createOscillator();
+    this.proxOsc3.type = 'sawtooth';
+    this.proxOsc3.frequency.value = BASE_FREQ;
+
+    this.proxOsc4 = this.ctx.createOscillator();
+    this.proxOsc4.type = 'sawtooth';
+    this.proxOsc4.frequency.value = BASE_FREQ + 1.5;
+
+    // Low-pass to keep it dark and rumbly (opposite of chase's highpass)
+    this.proxFilter = this.ctx.createBiquadFilter();
+    this.proxFilter.type = 'lowpass';
+    this.proxFilter.frequency.value = 800;
+    this.proxFilter.Q.value = 2;
+
+    this.proxGain = this.ctx.createGain();
+    this.proxGain.gain.value = 0;
+
+    this.proxOsc1.connect(this.proxFilter);
+    this.proxOsc2.connect(this.proxFilter);
+    this.proxOsc3.connect(this.proxFilter);
+    this.proxOsc4.connect(this.proxFilter);
+    this.proxFilter.connect(this.proxGain);
+
+    // Dry/wet routing with reverb
+    const proxDry = this.ctx.createGain();
+    proxDry.gain.value = 0.3;
+
+    const proxConvolver = this.ctx.createConvolver();
+    proxConvolver.buffer = this.generateImpulseResponse(2.0, 4.5);
+
+    const proxWet = this.ctx.createGain();
+    proxWet.gain.value = 1.5;
+
+    this.proxGain.connect(proxDry).connect(this.masterGain);
+    this.proxGain.connect(proxConvolver).connect(proxWet).connect(this.masterGain);
+
+    // Noise layer for low rumble texture
+    const sr = this.ctx.sampleRate;
+    const noiseBuf = this.ctx.createBuffer(1, sr * 2, sr);
+    const nd = noiseBuf.getChannelData(0);
+    for (let i = 0; i < nd.length; i++) {
+      nd[i] = (Math.random() - 0.5) * 0.5;
+    }
+    this.proxNoiseSource = this.ctx.createBufferSource();
+    this.proxNoiseSource.buffer = noiseBuf;
+    this.proxNoiseSource.loop = true;
+
+    this.proxNoiseGain = this.ctx.createGain();
+    this.proxNoiseGain.gain.value = 0;
+
+    const noiseFilter = this.ctx.createBiquadFilter();
+    noiseFilter.type = 'bandpass';
+    noiseFilter.frequency.value = 300;
+    noiseFilter.Q.value = 1.0;
+
+    this.proxNoiseSource.connect(noiseFilter);
+    noiseFilter.connect(this.proxNoiseGain);
+    this.proxNoiseGain.connect(proxDry);
+    this.proxNoiseGain.connect(proxConvolver);
+
+    this.proxOsc1.start();
+    this.proxOsc2.start();
+    this.proxOsc3.start();
+    this.proxOsc4.start();
+    this.proxNoiseSource.start();
+  }
+
+  /** Call every frame with distance to nearest enemy (any state, not just chasing).
+   *  Low growl that rises in pitch and volume as enemies get close. */
+  updateProximityTension(nearestDist: number) {
+    if (!this.ctx) return;
+    this.initProximityLayer();
+    if (!this.proxOsc1 || !this.proxOsc2 || !this.proxOsc3 || !this.proxOsc4 ||
+        !this.proxGain || !this.proxNoiseGain) return;
+
+    const BASE_FREQ = 200;
+    const MAX_DIST = 20;
+    const MIN_DIST = 2;
+
+    if (nearestDist >= 0 && nearestDist < MAX_DIST) {
+      const prox = 1.0 - Math.max(0, Math.min(1, (nearestDist - MIN_DIST) / (MAX_DIST - MIN_DIST)));
+
+      // Quadratic pitch and volume scaling
+      const targetPitch = prox * prox;
+      this.proxPitch += (targetPitch - this.proxPitch) * 0.06;
+
+      // Note 1: base freq rises up to 2 semitones
+      const semitoneShift = this.proxPitch * 2;
+      const freq1 = BASE_FREQ * Math.pow(AudioManager.SEMITONE_RATIO, semitoneShift);
+      this.proxOsc1.frequency.value = freq1;
+      this.proxOsc2.frequency.value = freq1 + 1.5;
+
+      // Note 2: detuned by up to 1 semitone
+      const stDetune = this.proxPitch * 4;
+      const freq2 = freq1 * Math.pow(AudioManager.QUARTER_ST_RATIO, stDetune);
+      this.proxOsc3.frequency.value = freq2;
+      this.proxOsc4.frequency.value = freq2 + 1.5;
+
+      // Volume: quadratic, starting from 0
+      const targetVol = prox * prox * 0.025;
+      this.proxVolume += (targetVol - this.proxVolume) * 0.08;
+      this.proxGain.gain.value = this.proxVolume;
+      this.proxNoiseGain.gain.value = this.proxVolume * 0.5;
+
+      // Filter opens as it gets closer
+      this.proxFilter!.frequency.value = 400 + prox * 600;
+
+    } else {
+      // Fade out
+      this.proxVolume *= 0.92;
+      this.proxPitch *= 0.95;
+      if (this.proxVolume < 0.001) this.proxVolume = 0;
+      this.proxGain.gain.value = this.proxVolume;
+      this.proxNoiseGain.gain.value = this.proxVolume * 0.5;
+
+      if (this.proxVolume === 0) {
+        this.proxOsc1.frequency.value = BASE_FREQ;
+        this.proxOsc2.frequency.value = BASE_FREQ + 1.5;
+        this.proxOsc3.frequency.value = BASE_FREQ;
+        this.proxOsc4.frequency.value = BASE_FREQ + 1.5;
+      }
+    }
   }
 
   // ── Chase tension (high-pitch rising shriek) ─────────────────────────────
@@ -766,6 +926,11 @@ export class AudioManager {
     this.chaseVolume = 0;
     this.chasePitch = 0;
     this.chaseActive = false;
+    // Kill proximity tension too
+    if (this.proxGain) this.proxGain.gain.value = 0;
+    if (this.proxNoiseGain) this.proxNoiseGain.gain.value = 0;
+    this.proxVolume = 0;
+    this.proxPitch = 0;
   }
 
   // ── Flashlight click (non-positional) ───────────────────────────────────
@@ -864,6 +1029,11 @@ export class AudioManager {
     if (this.chaseOsc3) { try { this.chaseOsc3.stop(); } catch {} this.chaseOsc3 = null; }
     if (this.chaseOsc4) { try { this.chaseOsc4.stop(); } catch {} this.chaseOsc4 = null; }
     if (this.chaseNoiseSource) { try { this.chaseNoiseSource.stop(); } catch {} this.chaseNoiseSource = null; }
+    if (this.proxOsc1) { try { this.proxOsc1.stop(); } catch {} this.proxOsc1 = null; }
+    if (this.proxOsc2) { try { this.proxOsc2.stop(); } catch {} this.proxOsc2 = null; }
+    if (this.proxOsc3) { try { this.proxOsc3.stop(); } catch {} this.proxOsc3 = null; }
+    if (this.proxOsc4) { try { this.proxOsc4.stop(); } catch {} this.proxOsc4 = null; }
+    if (this.proxNoiseSource) { try { this.proxNoiseSource.stop(); } catch {} this.proxNoiseSource = null; }
     this.ctx?.close();
   }
 }

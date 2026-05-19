@@ -8,7 +8,8 @@ const BASE_CHASE_SPEED  = 5.0;
 const SPEED_SCALE_PER_FLOOR = 0.10; // +10% per floor
 const SIGHT_RANGE       = 14;   // world units (flashlight on)
 const SIGHT_RANGE_DARK  = 4;    // world units (flashlight off — very short)
-const LOSE_RANGE        = 20;   // enemy loses sight beyond this
+const LOSE_RANGE        = 20;   // enemy loses sight beyond this (flashlight on)
+const LOSE_RANGE_DARK   = 10;   // loses sight much sooner in the dark
 const CATCH_DISTANCE    = 1.2;
 const PATH_UPDATE_INTERVAL = 0.5; // seconds
 
@@ -320,7 +321,8 @@ export class Enemy {
           this.lastKnownPlayerPos = playerPos.clone();
         }
 
-        if (!canSee && distToPlayer > LOSE_RANGE) {
+        const effectiveLoseRange = flashlightOn ? LOSE_RANGE : LOSE_RANGE_DARK;
+        if (!canSee && distToPlayer > effectiveLoseRange) {
           console.log(`[Enemy z${this.patrolZone} f${this.floorIndex}] LOST player at dist ${distToPlayer.toFixed(1)}`);
           // Lost the player — validate position (chase beeline may have pushed into walls)
           this.snapToNearestReachable();

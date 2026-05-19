@@ -91,7 +91,8 @@ export class Game {
 
   constructor(container: HTMLElement) {
     this.renderer = new THREE.WebGLRenderer({ antialias: true });
-    this.renderer.setPixelRatio(window.devicePixelRatio);
+    // Cap pixel ratio to avoid GPU overload on high-DPI devices (3x, 4x screens)
+    this.renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
     this.renderer.setSize(window.innerWidth, window.innerHeight);
     this.renderer.shadowMap.enabled = true;
     container.appendChild(this.renderer.domElement);
@@ -542,8 +543,9 @@ export class Game {
       }
     }
 
-    // Update proximity drone
+    // Update proximity drone + proximity tension growl
     this.audio.updateProximityDrone(this.debugNoEnemy ? -1 : nearestDist);
+    this.audio.updateProximityTension(this.debugNoEnemy ? -1 : nearestDist);
 
     // Chase tension — rising high-pitch shriek
     const isChasing = nearestChasingDist < Infinity;
@@ -585,6 +587,7 @@ export class Game {
     this.audio.playDeathStinger();
     this.audio.stopEnemySound();
     this.audio.updateProximityDrone(-1);
+    this.audio.updateProximityTension(-1);
   }
 
   private flickerState = true;
@@ -940,6 +943,7 @@ export class Game {
           enemy.mesh.visible = false;
         }
         this.audio.updateProximityDrone(-1);
+    this.audio.updateProximityTension(-1);
       }
     });
 
