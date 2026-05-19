@@ -10,8 +10,9 @@ const BTN_A     = 0;   // Jump (Cross / A)
 const BTN_X     = 2;   // Flashlight (Square / X)
 const BTN_L3    = 10;  // Left stick press — sprint toggle
 
-const DEAD_ZONE       = 0.15;
+const DEAD_ZONE        = 0.20;
 const LOOK_SENSITIVITY = 0.04;  // radians per frame at full tilt
+const MAX_LOOK_DELTA   = 0.06;  // clamp to prevent random spikes
 
 export class GamepadManager {
   private player: Player | null = null;
@@ -70,9 +71,11 @@ export class GamepadManager {
       return false;
     }
 
-    // Check if there's any real input from the gamepad
-    const hasInput = Math.abs(lx) > 0 || Math.abs(ly) > 0
-                  || Math.abs(rx) > 0 || Math.abs(ry) > 0
+    // Require deliberate input to activate (stick > 0.4 or button press)
+    // Prevents phantom/drifting gamepads from hijacking mouse control
+    const ACTIVATE_THRESHOLD = 0.4;
+    const hasInput = Math.abs(lx) > ACTIVATE_THRESHOLD || Math.abs(ly) > ACTIVATE_THRESHOLD
+                  || Math.abs(rx) > ACTIVATE_THRESHOLD || Math.abs(ry) > ACTIVATE_THRESHOLD
                   || l3 || a || x;
 
     // Activate on first real input, deactivate when keyboard takes over
@@ -111,7 +114,9 @@ export class GamepadManager {
 
     // ── Right stick → look ─────────────────────────────────────────────
     if (Math.abs(rx) > 0.01 || Math.abs(ry) > 0.01) {
-      this.player.applyLookDelta(rx * LOOK_SENSITIVITY, ry * LOOK_SENSITIVITY);
+      const dx = Math.max(-MAX_LOOK_DELTA, Math.min(MAX_LOOK_DELTA, rx * LOOK_SENSITIVITY));
+      const dy = Math.max(-MAX_LOOK_DELTA, Math.min(MAX_LOOK_DELTA, ry * LOOK_SENSITIVITY));
+      this.player.applyLookDelta(dx, dy);
     }
 
     // ── Buttons (edge-triggered) ───────────────────────────────────────

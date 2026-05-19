@@ -64,6 +64,12 @@ export class Enemy {
   // Reference to siblings for separation + alerts
   private siblings: Enemy[] = [];
 
+  // Key-collected "smell" system — enemies are attracted toward player area
+  private keyCollected = false;
+  private playerHint: THREE.Vector3 = new THREE.Vector3();
+  // Track last patrol target to ensure diversity (go far from where we just were)
+  private lastPatrolCell: { x: number; z: number } | null = null;
+
   // Directional sprites
   private texFront!: THREE.Texture;
   private texBack!:  THREE.Texture;
@@ -87,6 +93,16 @@ export class Enemy {
   /** Set the patrol zone index (0, 1, 2, ...) for spatial distribution */
   setPatrolZone(zone: number) {
     this.patrolZone = zone;
+  }
+
+  /** Notify this enemy that the key was collected on its floor — start "smelling" the player */
+  setKeyCollected(collected: boolean) {
+    this.keyCollected = collected;
+  }
+
+  /** Update the player position hint (used for attraction when key is collected) */
+  setPlayerHint(pos: THREE.Vector3) {
+    this.playerHint.copy(pos);
   }
 
   private loadSprites() {
@@ -127,16 +143,17 @@ export class Enemy {
 
     const floor = this.maze.floors[floorIndex];
     const entry = floor.entryCell;
+    const W = floor.width, H = floor.height;
     // Use enemy BFS (excludes obstacle cells — enemies can't jump them)
     const reachable = this.bfsReachableFrom(entry.x, entry.z, floorIndex);
     this.reachableCells = reachable;
 
-    // Each enemy gets assigned ONE interest point (round-robin by patrol zone)
-    let assignedIP: { x: number; z: number } | null = null;
-    if (interestPoints.length > 0) {
-      const ip = interestPoints[this.patrolZone % interestPoints.length];
-      assignedIP = this.maze.worldToCell(ip.x, ip.z, floorIndex);
-    }
+    // Assign each enemy a different map quadrant for spatial distribution
+    // This ensures enemies start spread across the map, not clustered
+    const numEnemies = Math.max(1, existingPositions.length + 1);
+    const quadAngle = (this.patrolZone / numEnemies) * Math.PI * 2;
+    const quadCenterX = W / 2 + (W / 4) * Math.cos(quadAngle);
+    const quadCenterZ = H / 2 + (H / 4) * Math.sin(quadAngle);
 
     let bestScore = -Infinity;
     let bestCell = reachable[0];
@@ -151,27 +168,33 @@ export class Enemy {
         score -= (MIN_DIST_FROM_PLAYER - distFromEntry) * 10;
       }
 
-      // Near assigned interest point (but not ON it — 3-15 cells ideal)
-      if (assignedIP) {
-        const ipDist = Math.sqrt((c.x - assignedIP.x) ** 2 + (c.z - assignedIP.z) ** 2);
-        if (ipDist < 3) {
-          score -= (3 - ipDist) * 8; // too close
-        } else if (ipDist < 15) {
-          score += 15 - ipDist; // sweet spot: reward being 3-15 cells away
-        } else {
-          score -= (ipDist - 15) * 0.5; // too far, mild penalty
+      // Prefer cells near assigned quadrant center (strong spatial spread)
+      const qdx = c.x - quadCenterX;
+      const qdz = c.z - quadCenterZ;
+      const quadDist = Math.sqrt(qdx * qdx + qdz * qdz);
+      score -= quadDist * 0.8;
+
+      // Mild attraction to interest points (but NOT dominant)
+      if (interestPoints.length > 0) {
+        let nearestIP = Infinity;
+        for (const ip of interestPoints) {
+          const ipc = this.maze.worldToCell(ip.x, ip.z, floorIndex);
+          const ipDist = Math.sqrt((c.x - ipc.x) ** 2 + (c.z - ipc.z) ** 2);
+          nearestIP = Math.min(nearestIP, ipDist);
         }
+        // Small bonus for being somewhat near any interest point (5-20 cells)
+        if (nearestIP < 5) score -= (5 - nearestIP) * 2;
+        else if (nearestIP < 20) score += (20 - nearestIP) * 0.3;
       }
 
-      // Far from already-placed enemies (strong separation)
+      // Far from already-placed enemies (very strong separation)
       for (const ep of existingPositions) {
         const ec = this.maze.worldToCell(ep.x, ep.z, floorIndex);
         const eDist = Math.sqrt((c.x - ec.x) ** 2 + (c.z - ec.z) ** 2);
-        // Strong bonus for distance — scales up to 30
-        score += Math.min(eDist, 30) * 1.5;
+        score += Math.min(eDist, 40) * 2.0;
       }
 
-      score += Math.random() * 3;
+      score += Math.random() * 4;
 
       if (score > bestScore) {
         bestScore = score;
@@ -196,7 +219,7 @@ export class Enemy {
     // so multiple alerted enemies converge from different angles
     this.investigateTimer = INVESTIGATE_DURATION;
     this.investigateTarget = this.pickInvestigatePoint(targetPos);
-    this.path = this.bfsPath(this.pos, this.investigateTarget);
+    this.path = this.smoothPath(this.bfsPath(this.pos, this.investigateTarget));
     this.searchTimer = INVESTIGATE_DURATION + 1; // don't override with random search
   }
 
@@ -214,20 +237,31 @@ export class Enemy {
     this.pathTimer += dt;
     this.spotCooldown -= dt;
 
-    // Stuck detection
+    // Stuck detection — covers searching + investigating (not chasing)
     this.stuckCheckTimer += dt;
     if (this.stuckCheckTimer >= STUCK_CHECK_INTERVAL) {
       const movedDist = this.pos.distanceTo(this.stuckCheckPos);
-      if (movedDist < STUCK_DISTANCE && (this.state === EnemyState.SEARCHING)) {
-        // Force a completely new path to a random reachable cell (no obstacles)
+      if (movedDist < STUCK_DISTANCE && this.state !== EnemyState.CHASING) {
+        // Snap to nearest valid reachable cell first (may be stuck in a wall)
+        this.snapToNearestReachable();
+        // Then force a new path to a far-away reachable cell
         const cells = this.reachableCells.filter(c => !c.hasObstacle);
         if (cells.length > 0) {
-          const pick = cells[Math.floor(Math.random() * cells.length)];
-          const wp = this.maze.cellToWorld(pick.x, pick.z, this.floorIndex);
+          const myCell = this.maze.worldToCell(this.pos.x, this.pos.z, this.floorIndex);
+          // Pick a cell far from current position
+          let bestDist = -1;
+          let bestPick = cells[0];
+          for (let i = 0; i < Math.min(cells.length, 40); i++) {
+            const c = cells[Math.floor(Math.random() * cells.length)];
+            const d = Math.abs(c.x - myCell.x) + Math.abs(c.z - myCell.z);
+            if (d > bestDist) { bestDist = d; bestPick = c; }
+          }
+          const wp = this.maze.cellToWorld(bestPick.x, bestPick.z, this.floorIndex);
           wp.y = this.pos.y;
           this.searchTarget = wp;
-          this.path = this.bfsPath(this.pos, wp);
-          this.searchTimer = 6;
+          this.path = this.smoothPath(this.bfsPath(this.pos, wp));
+          this.searchTimer = 12;
+          this.investigateTimer = 0; // cancel investigation if stuck
         }
       }
       this.stuckCheckPos.copy(this.pos);
@@ -272,13 +306,15 @@ export class Enemy {
         }
 
         if (!canSee && distToPlayer > LOSE_RANGE) {
-          // Lost the player — start investigating the area
+          // Lost the player — validate position (chase beeline may have pushed into walls)
+          this.snapToNearestReachable();
+          // Start investigating the area
           this.state = EnemyState.SEARCHING;
           this.investigateTimer = INVESTIGATE_DURATION;
           this.investigateTarget = this.pickInvestigatePoint(
             this.lastKnownPlayerPos ?? playerPos
           );
-          this.path = this.bfsPath(this.pos, this.investigateTarget);
+          this.path = this.smoothPath(this.bfsPath(this.pos, this.investigateTarget));
           break;
         }
 
@@ -364,7 +400,7 @@ export class Enemy {
     if (this.path.length === 0 || this.pos.distanceTo(this.investigateTarget) < 1.0) {
       if (this.lastKnownPlayerPos) {
         this.investigateTarget = this.pickInvestigatePoint(this.lastKnownPlayerPos);
-        this.path = this.bfsPath(this.pos, this.investigateTarget);
+        this.path = this.smoothPath(this.bfsPath(this.pos, this.investigateTarget));
       } else {
         this.investigateTimer = 0;
         return;
@@ -413,10 +449,13 @@ export class Enemy {
   private doSearch(dt: number, speedMult: number) {
     this.searchTimer -= dt;
     if (!this.searchTarget || this.searchTimer <= 0 ||
-        this.pos.distanceTo(this.searchTarget) < 0.5 || this.path.length === 0) {
+        this.pos.distanceTo(this.searchTarget) < 1.5 || this.path.length === 0) {
       this.searchTarget = this.pickPatrolTarget();
-      this.searchTimer = 5 + Math.random() * 4;
       this.path = this.bfsPath(this.pos, this.searchTarget);
+      this.path = this.smoothPath(this.path);
+      // Timer based on actual walk distance (smoothed waypoints can be far apart)
+      const speed = BASE_SEARCH_SPEED * (1 + this.floorIndex * SPEED_SCALE_PER_FLOOR);
+      this.searchTimer = Math.max(8, this.pathWalkDistance(this.path) / speed + 4 + Math.random() * 3);
     }
 
     if (this.path.length > 0) {
@@ -426,46 +465,75 @@ export class Enemy {
     }
   }
 
-  /** Pick a patrol target that's far away and far from other enemies */
+  /** Pick a patrol target — uses BFS distance map so enemies travel through
+   *  the actual maze topology, not just grid Euclidean distance. This prevents
+   *  enemies from staying in one corridor on room-based levels like La Casa. */
   private pickPatrolTarget(): THREE.Vector3 {
-    // Always exclude obstacle cells — enemies cannot traverse them
     const cells = this.reachableCells.filter(c => !c.hasObstacle);
     const floor = this.maze.floors[this.floorIndex];
     if (!floor || cells.length === 0) return this.pos.clone();
 
-    const W = floor.width, H = floor.height;
     const myCell = this.maze.worldToCell(this.pos.x, this.pos.z, this.floorIndex);
 
-    // Divide the map into zones based on patrol index
-    // Each enemy tends to patrol a different quadrant/sector
-    const numZones = Math.max(1, this.siblings.filter(s => s.homeFloor === this.homeFloor).length);
-    const zoneAngle = (this.patrolZone / numZones) * Math.PI * 2;
-    const zoneCenterX = W / 2 + (W / 3) * Math.cos(zoneAngle);
-    const zoneCenterZ = H / 2 + (H / 3) * Math.sin(zoneAngle);
+    // Build BFS distance map from current position — gives REAL travel distance
+    // to every reachable cell (accounts for corridors, rooms, dead ends)
+    const distMap = this.bfsDistanceMap(myCell.x, myCell.z);
+
+    // Also build distance map from last patrol target for diversity
+    let lastDistMap: Map<string, number> | null = null;
+    if (this.lastPatrolCell) {
+      lastDistMap = this.bfsDistanceMap(this.lastPatrolCell.x, this.lastPatrolCell.z);
+    }
+
+    // Player cell (used when key is collected — "smell" attraction)
+    const playerCell = this.keyCollected
+      ? this.maze.worldToCell(this.playerHint.x, this.playerHint.z, this.floorIndex)
+      : null;
+    let playerDistMap: Map<string, number> | null = null;
+    if (playerCell) {
+      playerDistMap = this.bfsDistanceMap(playerCell.x, playerCell.z);
+    }
 
     // Score each candidate cell
     let bestScore = -Infinity;
     let bestCell = cells[0];
-    // Sample a subset for performance on large maps
-    const sampleSize = Math.min(cells.length, 80);
+    const sampleSize = Math.min(cells.length, 150);
     const step = Math.max(1, Math.floor(cells.length / sampleSize));
 
     for (let i = 0; i < cells.length; i += step) {
       const c = cells[i];
-      const dx = c.x - myCell.x;
-      const dz = c.z - myCell.z;
-      const distFromSelf = Math.sqrt(dx * dx + dz * dz);
+      const key = `${c.x},${c.z}`;
+      const bfsDist = distMap.get(key) ?? 0;
 
-      // Prefer cells far from our current position
-      let score = Math.min(distFromSelf, 30); // cap so very far cells don't always win
+      let score = 0;
 
-      // Prefer cells near our assigned zone center
-      const dzx = c.x - zoneCenterX;
-      const dzz = c.z - zoneCenterZ;
-      const distFromZone = Math.sqrt(dzx * dzx + dzz * dzz);
-      score -= distFromZone * 0.3;
+      if (this.keyCollected && playerDistMap) {
+        // ── KEY COLLECTED: "smell" the player ──
+        const bfsToPlayer = playerDistMap.get(key) ?? 999;
+        // Sweet spot: 3-12 BFS steps from player (not ON them, not too far)
+        if (bfsToPlayer < 3) {
+          score += 20 - (3 - bfsToPlayer) * 4;
+        } else if (bfsToPlayer < 12) {
+          score += 28 - bfsToPlayer;
+        } else {
+          score += Math.max(0, 16 - bfsToPlayer * 0.3);
+        }
+        // Still want some travel from current position
+        score += Math.min(bfsDist, 20) * 0.4;
 
-      // Penalize cells near other enemies
+      } else {
+        // ── IDLE ROAMING: travel FAR through the actual maze ──
+        // Primary: maximize real travel distance from current position
+        score += Math.min(bfsDist, 60) * 1.5;
+
+        // Secondary: also far from last target (ensures diversity across picks)
+        if (lastDistMap) {
+          const lastDist = lastDistMap.get(key) ?? 0;
+          score += Math.min(lastDist, 40) * 0.8;
+        }
+      }
+
+      // Penalize cells near other enemies (separation — both modes)
       for (const sib of this.siblings) {
         if (sib === this || sib.homeFloor !== this.homeFloor) continue;
         const sibCell = this.maze.worldToCell(sib.pos.x, sib.pos.z, this.floorIndex);
@@ -477,14 +545,15 @@ export class Enemy {
         }
       }
 
-      // Small random jitter to avoid determinism
-      score += Math.random() * 5;
+      score += Math.random() * (this.keyCollected ? 4 : 8);
 
       if (score > bestScore) {
         bestScore = score;
         bestCell = c;
       }
     }
+
+    this.lastPatrolCell = { x: bestCell.x, z: bestCell.z };
 
     const wp = this.maze.cellToWorld(bestCell.x, bestCell.z, this.floorIndex);
     wp.y = this.pos.y;
@@ -504,7 +573,7 @@ export class Enemy {
       // No line of sight — fall back to BFS grid pathfinding
       if (this.pathTimer >= PATH_UPDATE_INTERVAL || this.path.length === 0) {
         this.pathTimer = 0;
-        this.path = this.bfsPath(this.pos, this.lastKnownPlayerPos ?? playerPos);
+        this.path = this.smoothPath(this.bfsPath(this.pos, this.lastKnownPlayerPos ?? playerPos));
       }
 
       if (this.path.length > 0) {
@@ -525,8 +594,80 @@ export class Enemy {
       this.moveDir.normalize();
       diff.normalize().multiplyScalar(Math.min(maxDist, dist));
       this.pos.add(diff);
+      // Push out of walls after every move step
+      this.enforceWalls();
     }
     return dist;
+  }
+
+  /** Push enemy position out of walls — mirrors Player.enforceWallMargin() */
+  private enforceWalls() {
+    const floor = this.maze.floors[this.floorIndex];
+    if (!floor) return;
+
+    const MARGIN = 0.4;  // tighter than player — enemies navigate narrow corridors better
+    const cx = Math.round(this.pos.x / CELL_SIZE);
+    const cz = Math.round(this.pos.z / CELL_SIZE);
+
+    for (let dz = -1; dz <= 1; dz++) {
+      for (let dx = -1; dx <= 1; dx++) {
+        const nx = cx + dx, nz = cz + dz;
+        if (nx < 0 || nx >= floor.width || nz < 0 || nz >= floor.height) continue;
+        const c = floor.cells[nz]?.[nx];
+        if (!c) continue;
+
+        const wx = nx * CELL_SIZE;
+        const wz = nz * CELL_SIZE;
+        const half = CELL_SIZE / 2;
+
+        const inX = this.pos.x >= wx - half && this.pos.x <= wx + half;
+        const inZ = this.pos.z >= wz - half && this.pos.z <= wz + half;
+
+        if (c.walls.N && inX) {
+          const face = wz - half;
+          const d = this.pos.z - face;
+          if (d > -MARGIN && d < MARGIN) this.pos.z = face + (d >= 0 ? MARGIN : -MARGIN);
+        }
+        if (c.walls.S && inX) {
+          const face = wz + half;
+          const d = this.pos.z - face;
+          if (d > -MARGIN && d < MARGIN) this.pos.z = face + (d >= 0 ? MARGIN : -MARGIN);
+        }
+        if (c.walls.W && inZ) {
+          const face = wx - half;
+          const d = this.pos.x - face;
+          if (d > -MARGIN && d < MARGIN) this.pos.x = face + (d >= 0 ? MARGIN : -MARGIN);
+        }
+        if (c.walls.E && inZ) {
+          const face = wx + half;
+          const d = this.pos.x - face;
+          if (d > -MARGIN && d < MARGIN) this.pos.x = face + (d >= 0 ? MARGIN : -MARGIN);
+        }
+      }
+    }
+  }
+
+  /** Snap enemy to the nearest reachable non-obstacle cell center.
+   *  Used for recovery when the enemy ends up in an invalid position. */
+  private snapToNearestReachable() {
+    const myCell = this.maze.worldToCell(this.pos.x, this.pos.z, this.floorIndex);
+    // Check if current cell is already reachable and not an obstacle
+    const ok = this.reachableCells.some(c => c.x === myCell.x && c.z === myCell.z && !c.hasObstacle);
+    if (ok) return; // position is fine
+
+    // Find nearest reachable cell by Manhattan distance
+    let bestDist = Infinity;
+    let bestCell = this.reachableCells[0];
+    for (const c of this.reachableCells) {
+      if (c.hasObstacle) continue;
+      const d = Math.abs(c.x - myCell.x) + Math.abs(c.z - myCell.z);
+      if (d < bestDist) { bestDist = d; bestCell = c; }
+    }
+    if (bestCell) {
+      const wp = this.maze.cellToWorld(bestCell.x, bestCell.z, this.floorIndex);
+      this.pos.x = wp.x;
+      this.pos.z = wp.z;
+    }
   }
 
   /** Simple BFS pathfinding on the maze grid */
@@ -588,6 +729,99 @@ export class Enemy {
     }
     if (path.length > 0) path.shift();
     return path;
+  }
+
+  /** BFS distance map from a start cell — returns Map<"x,z", stepCount>.
+   *  Used by pickPatrolTarget to score cells by real travel distance. */
+  private bfsDistanceMap(sx: number, sz: number): Map<string, number> {
+    const floor = this.maze.floors[this.floorIndex];
+    const dist = new Map<string, number>();
+    if (!floor) return dist;
+    const W = floor.width, H = floor.height;
+    const queue: { x: number; z: number; d: number }[] = [{ x: sx, z: sz, d: 0 }];
+    dist.set(`${sx},${sz}`, 0);
+
+    while (queue.length > 0) {
+      const { x, z, d } = queue.shift()!;
+      const cell = floor.cells[z]?.[x];
+      if (!cell) continue;
+
+      const tryMove = (nx: number, nz: number) => {
+        const key = `${nx},${nz}`;
+        if (nx >= 0 && nx < W && nz >= 0 && nz < H && !dist.has(key)) {
+          const nc = floor.cells[nz]?.[nx];
+          if (nc?.hasObstacle) return;
+          if (nc && nc.walls.N && nc.walls.S && nc.walls.E && nc.walls.W) return;
+          dist.set(key, d + 1);
+          queue.push({ x: nx, z: nz, d: d + 1 });
+        }
+      };
+
+      if (!cell.walls.N || !floor.cells[z - 1]?.[x]?.walls.S) tryMove(x, z - 1);
+      if (!cell.walls.S || !floor.cells[z + 1]?.[x]?.walls.N) tryMove(x, z + 1);
+      if (!cell.walls.E || !floor.cells[z]?.[x + 1]?.walls.W) tryMove(x + 1, z);
+      if (!cell.walls.W || !floor.cells[z]?.[x - 1]?.walls.E) tryMove(x - 1, z);
+    }
+    return dist;
+  }
+
+  /** Compute actual walking distance along a path (sum of segment lengths) */
+  private pathWalkDistance(path: THREE.Vector3[]): number {
+    let d = 0;
+    for (let i = 1; i < path.length; i++) {
+      d += path[i].distanceTo(path[i - 1]);
+    }
+    return d;
+  }
+
+  /**
+   * String-pulling path smoother: skip intermediate waypoints when there's
+   * a clear line-of-sight to a further waypoint. Produces much shorter,
+   * more natural paths through rooms and wide corridors.
+   */
+  private smoothPath(raw: THREE.Vector3[]): THREE.Vector3[] {
+    if (raw.length <= 2) return raw;
+    const result: THREE.Vector3[] = [raw[0]];
+    let anchor = 0;
+    while (anchor < raw.length - 1) {
+      // Try to skip as far ahead as possible
+      let farthest = anchor + 1;
+      for (let i = anchor + 2; i < raw.length; i++) {
+        if (this.hasLineOfSightXZ(raw[anchor], raw[i])) {
+          farthest = i;
+        }
+      }
+      result.push(raw[farthest]);
+      anchor = farthest;
+    }
+    return result;
+  }
+
+  /** Grid-level line-of-sight check between two world positions (XZ plane).
+   *  Steps through the grid cells between A and B and checks for solid walls. */
+  private hasLineOfSightXZ(a: THREE.Vector3, b: THREE.Vector3): boolean {
+    const floor = this.maze.floors[this.floorIndex];
+    if (!floor) return false;
+    const dx = b.x - a.x;
+    const dz = b.z - a.z;
+    const dist = Math.sqrt(dx * dx + dz * dz);
+    if (dist < 0.1) return true;
+    // Step in half-cell increments for accuracy
+    const steps = Math.ceil(dist / (CELL_SIZE * 0.5));
+    for (let i = 1; i < steps; i++) {
+      const t = i / steps;
+      const px = a.x + dx * t;
+      const pz = a.z + dz * t;
+      const cx = Math.round(px / CELL_SIZE);
+      const cz = Math.round(pz / CELL_SIZE);
+      if (cx < 0 || cx >= floor.width || cz < 0 || cz >= floor.height) return false;
+      const c = floor.cells[cz]?.[cx];
+      if (!c) return false;
+      // Fully walled cell = solid block
+      if (c.walls.N && c.walls.S && c.walls.E && c.walls.W) return false;
+      if (c.hasObstacle) return false;
+    }
+    return true;
   }
 
   /**

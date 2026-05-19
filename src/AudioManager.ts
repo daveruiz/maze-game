@@ -445,8 +445,12 @@ export class AudioManager {
 
   // ── Chase tension (high-pitch rising shriek) ─────────────────────────────
 
+  // Note 1: main pair (osc1 + osc2 with small fixed beating)
   private chaseOsc1: OscillatorNode | null = null;
   private chaseOsc2: OscillatorNode | null = null;
+  // Note 2: detuned pair (osc3 + osc4, quarter-semitone offset, widens with proximity)
+  private chaseOsc3: OscillatorNode | null = null;
+  private chaseOsc4: OscillatorNode | null = null;
   private chaseNoiseSource: AudioBufferSourceNode | null = null;
   private chaseGain: GainNode | null = null;
   private chaseNoiseGain: GainNode | null = null;
@@ -455,17 +459,32 @@ export class AudioManager {
   private chasePitch = 0;     // current smoothed pitch 0..1
   private chaseVolume = 0;    // current smoothed volume
 
+  // Semitone = 2^(1/12); quarter-semitone = 2^(0.25/12)
+  private static readonly SEMITONE_RATIO = Math.pow(2, 1 / 12);         // ~1.05946
+  private static readonly QUARTER_ST_RATIO = Math.pow(2, 0.25 / 12);    // ~1.01449
+
   private initChaseLayer() {
     if (!this.ctx || this.chaseOsc1) return;
 
-    // Two detuned oscillators for dissonant screech
+    const BASE_FREQ = 400;
+
+    // Note 1: two detuned sawtooths (small fixed beating)
     this.chaseOsc1 = this.ctx.createOscillator();
     this.chaseOsc1.type = 'sawtooth';
-    this.chaseOsc1.frequency.value = 400;
+    this.chaseOsc1.frequency.value = BASE_FREQ;
 
     this.chaseOsc2 = this.ctx.createOscillator();
     this.chaseOsc2.type = 'sawtooth';
-    this.chaseOsc2.frequency.value = 403; // slight detune for beating
+    this.chaseOsc2.frequency.value = BASE_FREQ + 2; // small fixed beat
+
+    // Note 2: second pair, quarter-semitone detune that grows with proximity
+    this.chaseOsc3 = this.ctx.createOscillator();
+    this.chaseOsc3.type = 'sawtooth';
+    this.chaseOsc3.frequency.value = BASE_FREQ;
+
+    this.chaseOsc4 = this.ctx.createOscillator();
+    this.chaseOsc4.type = 'sawtooth';
+    this.chaseOsc4.frequency.value = BASE_FREQ + 2;
 
     // High-pass filter to keep it shrill
     this.chaseFilter = this.ctx.createBiquadFilter();
@@ -479,9 +498,11 @@ export class AudioManager {
 
     this.chaseOsc1.connect(this.chaseFilter);
     this.chaseOsc2.connect(this.chaseFilter);
+    this.chaseOsc3.connect(this.chaseFilter);
+    this.chaseOsc4.connect(this.chaseFilter);
     this.chaseFilter.connect(this.chaseGain);
 
-    // Chase-specific dry/wet routing: 50% dry, 200% wet reverb
+    // Chase-specific dry/wet routing: 10% dry, 200% wet reverb
     const chaseDry = this.ctx.createGain();
     chaseDry.gain.value = 0.1;
 
@@ -521,6 +542,8 @@ export class AudioManager {
 
     this.chaseOsc1.start();
     this.chaseOsc2.start();
+    this.chaseOsc3.start();
+    this.chaseOsc4.start();
     this.chaseNoiseSource.start();
   }
 
@@ -532,8 +555,10 @@ export class AudioManager {
   updateChaseTension(chasing: boolean, nearestDist: number) {
     if (!this.ctx) return;
     this.initChaseLayer();
-    if (!this.chaseOsc1 || !this.chaseOsc2 || !this.chaseGain || !this.chaseNoiseGain) return;
+    if (!this.chaseOsc1 || !this.chaseOsc2 || !this.chaseOsc3 || !this.chaseOsc4 ||
+        !this.chaseGain || !this.chaseNoiseGain) return;
 
+    const BASE_FREQ = 400;
     const MAX_DIST = 25;
     const MIN_DIST = 2;
 
@@ -541,13 +566,22 @@ export class AudioManager {
       // Proximity 0..1 (1 = touching)
       const prox = 1.0 - Math.max(0, Math.min(1, (nearestDist - MIN_DIST) / (MAX_DIST - MIN_DIST)));
 
-      // Pitch rises: 400Hz → 2200Hz
-      const targetPitch = prox;
+      // Pitch rises quadratically: subtle at distance, dramatic up close
+      const targetPitch = prox * prox;
       this.chasePitch += (targetPitch - this.chasePitch) * 0.06;
 
-      const freq = 400 + this.chasePitch * 1800;
-      this.chaseOsc1.frequency.value = freq;
-      this.chaseOsc2.frequency.value = freq + 3 + this.chasePitch * 15; // detune widens with proximity
+      // Note 1: base freq rises up to 2 semitones (400 → ~449 Hz)
+      const semitoneShift = this.chasePitch * 2; // 0..1 → 0..2 semitones
+      const freq1 = BASE_FREQ * Math.pow(AudioManager.SEMITONE_RATIO, semitoneShift);
+      this.chaseOsc1.frequency.value = freq1;
+      this.chaseOsc2.frequency.value = freq1 + 2; // small fixed beating
+
+      // Note 2: detuned by up to a full semitone, increasing with proximity
+      // At prox=0 → same as note 1; at prox=1 → 1 semitone above note 1
+      const stDetune = this.chasePitch * 4; // 0..1 → 0..4 quarter-semitones = 0..1 semitone
+      const freq2 = freq1 * Math.pow(AudioManager.QUARTER_ST_RATIO, stDetune);
+      this.chaseOsc3.frequency.value = freq2;
+      this.chaseOsc4.frequency.value = freq2 + 2;
 
       // Volume ramps up: quadratic for dramatic curve
       const targetVol = prox * prox * 0.03;
@@ -570,8 +604,10 @@ export class AudioManager {
       this.chaseNoiseGain.gain.value = this.chaseVolume * 0.4;
 
       if (this.chaseVolume === 0) {
-        this.chaseOsc1.frequency.value = 400;
-        this.chaseOsc2.frequency.value = 403;
+        this.chaseOsc1.frequency.value = BASE_FREQ;
+        this.chaseOsc2.frequency.value = BASE_FREQ + 2;
+        this.chaseOsc3.frequency.value = BASE_FREQ;
+        this.chaseOsc4.frequency.value = BASE_FREQ + 2;
         this.chaseActive = false;
       }
     }
@@ -754,6 +790,8 @@ export class AudioManager {
     if (this.flickerSource) { try { this.flickerSource.stop(); } catch {} this.flickerSource = null; }
     if (this.chaseOsc1) { try { this.chaseOsc1.stop(); } catch {} this.chaseOsc1 = null; }
     if (this.chaseOsc2) { try { this.chaseOsc2.stop(); } catch {} this.chaseOsc2 = null; }
+    if (this.chaseOsc3) { try { this.chaseOsc3.stop(); } catch {} this.chaseOsc3 = null; }
+    if (this.chaseOsc4) { try { this.chaseOsc4.stop(); } catch {} this.chaseOsc4 = null; }
     if (this.chaseNoiseSource) { try { this.chaseNoiseSource.stop(); } catch {} this.chaseNoiseSource = null; }
     this.ctx?.close();
   }

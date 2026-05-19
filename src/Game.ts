@@ -145,11 +145,14 @@ export class Game {
     // Debug full-bright light (added to scene on demand)
     this.debugAmbient = new THREE.AmbientLight(0xffffff, 6);
 
-    // Flashlight toggle + keyboard reclaims control from gamepad
+    // Flashlight toggle + keyboard/mouse reclaims control from gamepad
     document.addEventListener('keydown', e => {
       this.gamepad.onKeyboardInput();
       if (e.code === 'KeyF' && !e.repeat) this.toggleFlashlight();
       if (e.code === 'Backquote' && !e.repeat) this.toggleDebugMenu();
+    });
+    document.addEventListener('mousemove', () => {
+      this.gamepad.onKeyboardInput();
     });
 
     this.setupDebugMenu();
@@ -455,6 +458,11 @@ export class Game {
     let caughtBy: Enemy | null = null;
     if (!this.debugNoEnemy) {
       for (const enemy of this.enemies) {
+        // Feed player hint + key status to enemies on this floor
+        if (enemy.homeFloor === fi) {
+          enemy.setPlayerHint(pp);
+          enemy.setKeyCollected(hasKey === true);
+        }
         const caught = enemy.update(dt, pp, this.player.floorIndex, this.camera, this.flashlightOn);
         if (caught && !caughtBy) {
           caughtBy = enemy;
