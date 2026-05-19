@@ -95,30 +95,85 @@ export class MazeGenerator {
   private generateCatacombs(fi: number): MazeFloor {
     const W = 21, H = 21;
     const cells = this.solidCells(W, H, fi);
+
+    // Thin-wall recursive backtracker — steps by 1 cell, uses wall flags only.
+    // Produces smooth corridors without the diagonal/checkerboard pattern.
     const stack: [number, number][] = [];
     cells[1][1].visited = true;
     stack.push([1, 1]);
 
     while (stack.length) {
       const [cx, cz] = stack[stack.length - 1];
-      const nbrs = this.unvisitedNeighbours(cells, cx, cz, W, H);
+      // Find unvisited neighbours (1 step away, within inner area)
+      const nbrs: [number, number, 'N'|'S'|'E'|'W'][] = [];
+      if (cz > 1     && !cells[cz - 1][cx].visited) nbrs.push([cx, cz - 1, 'N']);
+      if (cz < H - 2 && !cells[cz + 1][cx].visited) nbrs.push([cx, cz + 1, 'S']);
+      if (cx < W - 2 && !cells[cz][cx + 1].visited) nbrs.push([cx + 1, cz, 'E']);
+      if (cx > 1     && !cells[cz][cx - 1].visited) nbrs.push([cx - 1, cz, 'W']);
+
       if (!nbrs.length) { stack.pop(); continue; }
+
       const [nx, nz, dir] = nbrs[Math.floor(Math.random() * nbrs.length)];
-      this.removeWall(cells, cx, cz, nx, nz, dir);
-      cells[nz][nx].visited = true;
+      // Open the wall between current and neighbour
+      const a = cells[cz][cx], b = cells[nz][nx];
+      if (dir === 'N') { a.walls.N = false; b.walls.S = false; }
+      if (dir === 'S') { a.walls.S = false; b.walls.N = false; }
+      if (dir === 'E') { a.walls.E = false; b.walls.W = false; }
+      if (dir === 'W') { a.walls.W = false; b.walls.E = false; }
+      b.visited = true;
       stack.push([nx, nz]);
     }
 
-    // Extra loops for variety
-    for (let i = 0; i < 15; i++) {
-      const x = 1 + 2 * Math.floor(Math.random() * ((W - 1) / 2));
-      const z = 1 + 2 * Math.floor(Math.random() * ((H - 1) / 2));
+    // Carve open areas for breathing space and escape routes
+    for (let i = 0; i < 12; i++) {
+      const rw = 2 + Math.floor(Math.random() * 3); // 2-4
+      const rh = 2 + Math.floor(Math.random() * 3);
+      const rx = 2 + Math.floor(Math.random() * (W - rw - 3));
+      const rz = 2 + Math.floor(Math.random() * (H - rh - 3));
+      this.carveRoom(cells, rx, rz, rx + rw - 1, rz + rh - 1);
+    }
+
+    // Heavy wall removal — eliminates dead ends, creates loops and escape routes
+    for (let i = 0; i < 90; i++) {
+      const x = 1 + Math.floor(Math.random() * (W - 2));
+      const z = 1 + Math.floor(Math.random() * (H - 2));
       const dirs = ['N','S','E','W'] as const;
       const dir = dirs[Math.floor(Math.random() * 4)];
       const [dx, dz] = dir === 'N' ? [0,-1] : dir === 'S' ? [0,1] : dir === 'E' ? [1,0] : [-1,0];
-      const mx = x + dx, mz = z + dz, ex = x + 2*dx, ez = z + 2*dz;
-      if (ex >= 0 && ex < W && ez >= 0 && ez < H) {
-        this.removeWall(cells, x, z, ex, ez, dir);
+      const nx = x + dx, nz = z + dz;
+      if (nx >= 1 && nx < W - 1 && nz >= 1 && nz < H - 1) {
+        const a = cells[z][x], b = cells[nz][nx];
+        if (dir === 'N') { a.walls.N = false; b.walls.S = false; }
+        if (dir === 'S') { a.walls.S = false; b.walls.N = false; }
+        if (dir === 'E') { a.walls.E = false; b.walls.W = false; }
+        if (dir === 'W') { a.walls.W = false; b.walls.E = false; }
+      }
+    }
+
+    // Dead-end removal — open a random wall in cells that have 3 walls (dead ends)
+    // This ensures the player always has escape routes
+    for (let z = 2; z < H - 2; z++) {
+      for (let x = 2; x < W - 2; x++) {
+        const c = cells[z][x];
+        const wallCount = (c.walls.N ? 1 : 0) + (c.walls.S ? 1 : 0) + (c.walls.E ? 1 : 0) + (c.walls.W ? 1 : 0);
+        if (wallCount >= 3) {
+          // Pick a random closed wall and open it
+          const closed: ('N'|'S'|'E'|'W')[] = [];
+          if (c.walls.N) closed.push('N');
+          if (c.walls.S) closed.push('S');
+          if (c.walls.E) closed.push('E');
+          if (c.walls.W) closed.push('W');
+          const pick = closed[Math.floor(Math.random() * closed.length)];
+          const [dx, dz] = pick === 'N' ? [0,-1] : pick === 'S' ? [0,1] : pick === 'E' ? [1,0] : [-1,0];
+          const nx = x + dx, nz = z + dz;
+          if (nx >= 1 && nx < W - 1 && nz >= 1 && nz < H - 1) {
+            const b = cells[nz][nx];
+            if (pick === 'N') { c.walls.N = false; b.walls.S = false; }
+            if (pick === 'S') { c.walls.S = false; b.walls.N = false; }
+            if (pick === 'E') { c.walls.E = false; b.walls.W = false; }
+            if (pick === 'W') { c.walls.W = false; b.walls.E = false; }
+          }
+        }
       }
     }
 

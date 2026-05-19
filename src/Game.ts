@@ -699,14 +699,30 @@ export class Game {
     // Minimum dot size so things are visible on large maps
     const dotMin = Math.max(Math.min(cellW, cellH), 2);
 
-    // Only draw the maze layout if we have the map
+    // Draw the maze layout — solid blocks + wall segments (works with both thick and thin walls)
     if (hasMap) {
+      // First pass: fill fully-solid cells as blocks
       for (let z = 0; z < H; z++) {
         for (let x = 0; x < W; x++) {
-          const c  = floor.cells[z][x];
+          const c = floor.cells[z][x];
+          if (c.walls.N && c.walls.S && c.walls.E && c.walls.W) {
+            ctx.fillStyle = '#334';
+            ctx.fillRect(x * cellW, z * cellH, cellW + 0.5, cellH + 0.5);
+          }
+        }
+      }
+      // Second pass: draw individual wall segments (for thin-wall mazes)
+      ctx.strokeStyle = '#556';
+      ctx.lineWidth = Math.max(0.5, Math.min(cellW, cellH) * 0.3);
+      for (let z = 0; z < H; z++) {
+        for (let x = 0; x < W; x++) {
+          const c = floor.cells[z][x];
           const px = x * cellW, pz = z * cellH;
-          const solid = c.walls.N && c.walls.S && c.walls.E && c.walls.W;
-          if (solid)      { ctx.fillStyle = '#334'; ctx.fillRect(px, pz, cellW + 0.5, cellH + 0.5); }
+          if (c.walls.N) { ctx.beginPath(); ctx.moveTo(px, pz); ctx.lineTo(px + cellW, pz); ctx.stroke(); }
+          if (c.walls.W) { ctx.beginPath(); ctx.moveTo(px, pz); ctx.lineTo(px, pz + cellH); ctx.stroke(); }
+          if (z === H - 1 && c.walls.S) { ctx.beginPath(); ctx.moveTo(px, pz + cellH); ctx.lineTo(px + cellW, pz + cellH); ctx.stroke(); }
+          if (x === W - 1 && c.walls.E) { ctx.beginPath(); ctx.moveTo(px + cellW, pz); ctx.lineTo(px + cellW, pz + cellH); ctx.stroke(); }
+          // Stairs / exit markers
           if (c.stairs === 'up') { ctx.fillStyle = '#fc4'; ctx.fillRect(px, pz, Math.max(cellW, 2), Math.max(cellH, 2)); }
           if (c.isExit)   { ctx.fillStyle = '#0f8'; ctx.fillRect(px, pz, Math.max(cellW, 2), Math.max(cellH, 2)); }
         }

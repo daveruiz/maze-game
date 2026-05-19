@@ -97,6 +97,9 @@ export class Enemy {
 
   /** Notify this enemy that the key was collected on its floor — start "smelling" the player */
   setKeyCollected(collected: boolean) {
+    if (collected && !this.keyCollected) {
+      console.log(`[Enemy z${this.patrolZone} f${this.floorIndex}] KEY COLLECTED — switching to HUNT mode`);
+    }
     this.keyCollected = collected;
   }
 
@@ -284,6 +287,7 @@ export class Enemy {
           this.lastKnownPlayerPos = playerPos.clone();
           this.audio.playChannelState(this.channelId, 'spotted');
           this.alertSiblings(playerPos);
+          console.log(`[Enemy z${this.patrolZone} f${this.floorIndex}] SPOTTED player at dist ${distToPlayer.toFixed(1)}`);
         } else if (this.investigateTimer > 0) {
           // Investigating an alert or last-known position
           this.investigateTimer -= dt;
@@ -306,6 +310,7 @@ export class Enemy {
         }
 
         if (!canSee && distToPlayer > LOSE_RANGE) {
+          console.log(`[Enemy z${this.patrolZone} f${this.floorIndex}] LOST player at dist ${distToPlayer.toFixed(1)}`);
           // Lost the player — validate position (chase beeline may have pushed into walls)
           this.snapToNearestReachable();
           // Start investigating the area
@@ -448,14 +453,33 @@ export class Enemy {
 
   private doSearch(dt: number, speedMult: number) {
     this.searchTimer -= dt;
-    if (!this.searchTarget || this.searchTimer <= 0 ||
-        this.pos.distanceTo(this.searchTarget) < 1.5 || this.path.length === 0) {
+    const reason =
+      !this.searchTarget ? 'no target' :
+      this.searchTimer <= 0 ? 'timer expired' :
+      this.pos.distanceTo(this.searchTarget) < 1.5 ? 'reached target' :
+      this.path.length === 0 ? 'empty path' : null;
+
+    if (reason) {
       this.searchTarget = this.pickPatrolTarget();
       this.path = this.bfsPath(this.pos, this.searchTarget);
       this.path = this.smoothPath(this.path);
       // Timer based on actual walk distance (smoothed waypoints can be far apart)
+      // When key is collected, re-pick faster so enemies track the player's movement
       const speed = BASE_SEARCH_SPEED * (1 + this.floorIndex * SPEED_SCALE_PER_FLOOR);
-      this.searchTimer = Math.max(8, this.pathWalkDistance(this.path) / speed + 4 + Math.random() * 3);
+      const walkTime = this.pathWalkDistance(this.path) / speed;
+      this.searchTimer = this.keyCollected
+        ? Math.max(3, Math.min(walkTime, 6) + 1 + Math.random() * 2)  // cap at ~9s, re-pick aggressively
+        : Math.max(8, walkTime + 4 + Math.random() * 3);
+
+      const myCell = this.maze.worldToCell(this.pos.x, this.pos.z, this.floorIndex);
+      const tgtCell = this.maze.worldToCell(this.searchTarget.x, this.searchTarget.z, this.floorIndex);
+      console.log(
+        `[Enemy z${this.patrolZone} f${this.floorIndex}] new target ` +
+        `(${myCell.x},${myCell.z})→(${tgtCell.x},${tgtCell.z}) | ` +
+        `reason: ${reason} | key: ${this.keyCollected} | ` +
+        `pathSteps: ${this.path.length} | walkDist: ${this.pathWalkDistance(this.path).toFixed(0)} | ` +
+        `timer: ${this.searchTimer.toFixed(1)}s`
+      );
     }
 
     if (this.path.length > 0) {
@@ -491,7 +515,8 @@ export class Enemy {
       : null;
     let playerDistMap: Map<string, number> | null = null;
     if (playerCell) {
-      playerDistMap = this.bfsDistanceMap(playerCell.x, playerCell.z);
+      // Smell propagates through obstacles (they're low blocks, not walls)
+      playerDistMap = this.bfsDistanceMap(playerCell.x, playerCell.z, true);
     }
 
     // Score each candidate cell
@@ -508,18 +533,13 @@ export class Enemy {
       let score = 0;
 
       if (this.keyCollected && playerDistMap) {
-        // ── KEY COLLECTED: "smell" the player ──
+        // ── KEY COLLECTED: relentlessly hunt the player ──
         const bfsToPlayer = playerDistMap.get(key) ?? 999;
-        // Sweet spot: 3-12 BFS steps from player (not ON them, not too far)
-        if (bfsToPlayer < 3) {
-          score += 20 - (3 - bfsToPlayer) * 4;
-        } else if (bfsToPlayer < 12) {
-          score += 28 - bfsToPlayer;
-        } else {
-          score += Math.max(0, 16 - bfsToPlayer * 0.3);
-        }
-        // Still want some travel from current position
-        score += Math.min(bfsDist, 20) * 0.4;
+        // Massive score inversely proportional to distance from player
+        // Max score at 3-5 steps, hard penalty beyond that
+        score += Math.max(0, 100 - bfsToPlayer * 4);
+        // Mild travel bonus so they don't just stand still
+        score += Math.min(bfsDist, 8) * 0.2;
 
       } else {
         // ── IDLE ROAMING: travel FAR through the actual maze ──
@@ -554,6 +574,18 @@ export class Enemy {
     }
 
     this.lastPatrolCell = { x: bestCell.x, z: bestCell.z };
+
+    // Debug: log score breakdown for the winning cell
+    const winKey = `${bestCell.x},${bestCell.z}`;
+    const winBfsDist = distMap.get(winKey) ?? 0;
+    const winPlayerDist = playerDistMap?.get(winKey) ?? -1;
+    const winLastDist = lastDistMap?.get(winKey) ?? -1;
+    console.log(
+      `[Enemy z${this.patrolZone} f${this.floorIndex}] pickTarget → (${bestCell.x},${bestCell.z}) ` +
+      `score: ${bestScore.toFixed(1)} | mode: ${this.keyCollected ? 'HUNT' : 'roam'} | ` +
+      `bfsDist: ${winBfsDist} | playerBfs: ${winPlayerDist} | lastBfs: ${winLastDist} | ` +
+      `smellScore: ${this.keyCollected ? Math.max(0, 100 - winPlayerDist * 4).toFixed(0) : 'n/a'}`
+    );
 
     const wp = this.maze.cellToWorld(bestCell.x, bestCell.z, this.floorIndex);
     wp.y = this.pos.y;
@@ -732,8 +764,9 @@ export class Enemy {
   }
 
   /** BFS distance map from a start cell — returns Map<"x,z", stepCount>.
-   *  Used by pickPatrolTarget to score cells by real travel distance. */
-  private bfsDistanceMap(sx: number, sz: number): Map<string, number> {
+   *  @param ignoreObstacles  true for smell/vision (obstacles are low, don't block);
+   *                          false for movement distance (enemies can't jump obstacles). */
+  private bfsDistanceMap(sx: number, sz: number, ignoreObstacles = false): Map<string, number> {
     const floor = this.maze.floors[this.floorIndex];
     const dist = new Map<string, number>();
     if (!floor) return dist;
@@ -750,7 +783,7 @@ export class Enemy {
         const key = `${nx},${nz}`;
         if (nx >= 0 && nx < W && nz >= 0 && nz < H && !dist.has(key)) {
           const nc = floor.cells[nz]?.[nx];
-          if (nc?.hasObstacle) return;
+          if (!ignoreObstacles && nc?.hasObstacle) return;
           if (nc && nc.walls.N && nc.walls.S && nc.walls.E && nc.walls.W) return;
           dist.set(key, d + 1);
           queue.push({ x: nx, z: nz, d: d + 1 });
@@ -798,28 +831,60 @@ export class Enemy {
   }
 
   /** Grid-level line-of-sight check between two world positions (XZ plane).
-   *  Steps through the grid cells between A and B and checks for solid walls. */
+   *  Checks wall crossings between cells — works with thin-wall mazes. */
   private hasLineOfSightXZ(a: THREE.Vector3, b: THREE.Vector3): boolean {
+    return this.checkWallLOS(a.x, a.z, b.x, b.z);
+  }
+
+  /** Shared wall-crossing LOS check. Steps along a ray and detects when crossing
+   *  from one cell to the next would pass through a wall (N/S/E/W flags). */
+  private checkWallLOS(ax: number, az: number, bx: number, bz: number): boolean {
     const floor = this.maze.floors[this.floorIndex];
     if (!floor) return false;
-    const dx = b.x - a.x;
-    const dz = b.z - a.z;
+    const W = floor.width, H = floor.height;
+
+    const dx = bx - ax;
+    const dz = bz - az;
     const dist = Math.sqrt(dx * dx + dz * dz);
     if (dist < 0.1) return true;
-    // Step in half-cell increments for accuracy
-    const steps = Math.ceil(dist / (CELL_SIZE * 0.5));
-    for (let i = 1; i < steps; i++) {
+
+    // Step in small increments; check cell transitions for wall crossings
+    const stepSize = CELL_SIZE * 0.4;
+    const steps = Math.ceil(dist / stepSize);
+    let prevCX = Math.round(ax / CELL_SIZE);
+    let prevCZ = Math.round(az / CELL_SIZE);
+
+    for (let i = 1; i <= steps; i++) {
       const t = i / steps;
-      const px = a.x + dx * t;
-      const pz = a.z + dz * t;
+      const px = ax + dx * t;
+      const pz = az + dz * t;
       const cx = Math.round(px / CELL_SIZE);
       const cz = Math.round(pz / CELL_SIZE);
-      if (cx < 0 || cx >= floor.width || cz < 0 || cz >= floor.height) return false;
-      const c = floor.cells[cz]?.[cx];
-      if (!c) return false;
-      // Fully walled cell = solid block
-      if (c.walls.N && c.walls.S && c.walls.E && c.walls.W) return false;
-      if (c.hasObstacle) return false;
+
+      // Out of bounds = blocked
+      if (cx < 0 || cx >= W || cz < 0 || cz >= H) return false;
+
+      // Obstacles are low jumpable blocks — they don't block line of sight
+      const cell = floor.cells[cz]?.[cx];
+      if (!cell) return false;
+
+      // Did we cross into a different cell? Check walls on both sides
+      if (cx !== prevCX || cz !== prevCZ) {
+        const prevCell = floor.cells[prevCZ]?.[prevCX];
+        if (!prevCell) return false;
+
+        // Crossed east (cx > prevCX)
+        if (cx > prevCX && (prevCell.walls.E || cell.walls.W)) return false;
+        // Crossed west
+        if (cx < prevCX && (prevCell.walls.W || cell.walls.E)) return false;
+        // Crossed south (cz > prevCZ)
+        if (cz > prevCZ && (prevCell.walls.S || cell.walls.N)) return false;
+        // Crossed north
+        if (cz < prevCZ && (prevCell.walls.N || cell.walls.S)) return false;
+
+        prevCX = cx;
+        prevCZ = cz;
+      }
     }
     return true;
   }
@@ -866,28 +931,14 @@ export class Enemy {
     return result;
   }
 
-  /** Raycast-based line of sight against maze walls */
+  /** Wall-crossing line of sight: steps along the ray and checks if crossing
+   *  from one cell to the next is blocked by a wall on either side. */
   private hasLineOfSight(playerPos: THREE.Vector3): boolean {
-    const dir = playerPos.clone().sub(this.pos);
-    const dist = dir.length();
+    const dx = playerPos.x - this.pos.x;
+    const dz = playerPos.z - this.pos.z;
+    const dist = Math.sqrt(dx * dx + dz * dz);
     if (dist > SIGHT_RANGE * 1.5) return false;
-    dir.normalize();
-
-    const floor = this.maze.floors[this.floorIndex];
-    if (!floor) return false;
-
-    const steps = Math.ceil(dist * 4);
-    for (let i = 1; i < steps; i++) {
-      const t = (i / steps) * dist;
-      const px = this.pos.x + dir.x * t;
-      const pz = this.pos.z + dir.z * t;
-      const cx = Math.round(px / CELL_SIZE);
-      const cz = Math.round(pz / CELL_SIZE);
-      if (cx < 0 || cx >= floor.width || cz < 0 || cz >= floor.height) return false;
-      const c = floor.cells[cz]?.[cx];
-      if (c && c.walls.N && c.walls.S && c.walls.E && c.walls.W) return false;
-    }
-    return true;
+    return this.checkWallLOS(this.pos.x, this.pos.z, playerPos.x, playerPos.z);
   }
 
   getPosition(): THREE.Vector3 { return this.pos; }
