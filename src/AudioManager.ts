@@ -41,6 +41,12 @@ class EnemyChannel {
   private currentWet = 0.1;
   private currentCutoff = 20000;
 
+  // Rear-source attenuation (head shadow emulation)
+  private rearFilter: BiquadFilterNode;
+  private rearGain: GainNode;
+  private currentRearCutoff = 20000;
+  private currentRearGain = 1.0;
+
   constructor(ctx: AudioContext, master: GainNode, reverbBus: GainNode) {
     this.ctx = ctx;
 
@@ -57,10 +63,20 @@ class EnemyChannel {
     this.occlusionFilter.frequency.value = 20000; // wide open by default
     this.occlusionFilter.Q.value = 0.7;
 
-    // Dry path: panner → filter → dryGain → master (direct/close sound)
+    // Rear-source low-pass: emulates head shadow / pinna filtering for behind sounds
+    this.rearFilter = ctx.createBiquadFilter();
+    this.rearFilter.type = 'lowpass';
+    this.rearFilter.frequency.value = 20000;
+    this.rearFilter.Q.value = 0.5;
+
+    // Rear-source gain: slight level drop for sounds behind the listener (~3dB)
+    this.rearGain = ctx.createGain();
+    this.rearGain.gain.value = 1.0;
+
+    // Dry path: panner → occlusionFilter → rearFilter → rearGain → dryGain → master
     this.dryGain = ctx.createGain();
     this.dryGain.gain.value = 1.0;
-    this.panner.connect(this.occlusionFilter).connect(this.dryGain).connect(master);
+    this.panner.connect(this.occlusionFilter).connect(this.rearFilter).connect(this.rearGain).connect(this.dryGain).connect(master);
 
     // Wet path: panner → wetGain → shared reverb bus (distant/reverberant)
     // Wet path bypasses the occlusion filter — reverb tail is naturally diffuse
@@ -85,7 +101,9 @@ class EnemyChannel {
     const occlusion = Math.min(1, wallT * 0.7 + distT * 0.4);
 
     // Dry/wet: more occlusion = less dry, more reverb
-    const targetDry = 1.0 - occlusion * 0.75;     // 1.0 → 0.25
+    // Direct line of sight (no walls) gets a 20% presence boost
+    const directBoost = wallCount === 0 ? 1.2 : 1.0;
+    const targetDry = (1.0 - occlusion * 0.75) * directBoost;     // 1.2 → 0.25
     const targetWet = 0.1 + occlusion * 1.2;       // 0.1 → 1.3
 
     // Low-pass cutoff: walls muffle high frequencies
@@ -100,6 +118,24 @@ class EnemyChannel {
     this.dryGain.gain.value = this.currentDry;
     this.wetGain.gain.value = this.currentWet;
     this.occlusionFilter.frequency.value = this.currentCutoff;
+  }
+
+  /** Update rear-source effect based on how far behind the listener the sound is.
+   *  @param rearFactor 0 = in front, 1 = directly behind */
+  updateRear(rearFactor: number) {
+    const SMOOTH = 0.1;
+    const r = Math.max(0, Math.min(1, rearFactor));
+
+    // Low-pass: front=20kHz (open), behind=3kHz (muffled treble, pinna shadow)
+    const targetCutoff = 20000 * Math.pow(0.15, r); // 20k → ~3k
+    // Gain: front=1.0, behind=0.7 (~3dB head shadow)
+    const targetGain = 1.0 - r * 0.3;
+
+    this.currentRearCutoff += (targetCutoff - this.currentRearCutoff) * SMOOTH;
+    this.currentRearGain   += (targetGain - this.currentRearGain) * SMOOTH;
+
+    this.rearFilter.frequency.value = this.currentRearCutoff;
+    this.rearGain.gain.value = this.currentRearGain;
   }
 
   setPosition(x: number, y: number, z: number) {
@@ -404,6 +440,11 @@ export class AudioManager {
   /** Update per-enemy sound occlusion (distance + wall count → reverb mix + muffle) */
   updateChannelOcclusion(id: number, dist: number, wallCount: number) {
     this.channels.get(id)?.updateOcclusion(dist, wallCount);
+  }
+
+  /** Update rear-source attenuation for a channel (0=front, 1=behind) */
+  updateChannelRear(id: number, rearFactor: number) {
+    this.channels.get(id)?.updateRear(rearFactor);
   }
 
   /** Update state of an enemy channel */

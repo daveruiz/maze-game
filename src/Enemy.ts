@@ -9,7 +9,7 @@ const SPEED_SCALE_PER_FLOOR = 0.10; // +10% per floor
 const SIGHT_RANGE       = 14;   // world units (flashlight on)
 const SIGHT_RANGE_DARK  = 4;    // world units (flashlight off — very short)
 const LOSE_RANGE        = 20;   // enemy loses sight beyond this (flashlight on)
-const LOSE_RANGE_DARK   = 10;   // loses sight much sooner in the dark
+const LOSE_RANGE_DARK   = 15;   // loses sight sooner in the dark
 const CATCH_DISTANCE    = 1.2;
 const PATH_UPDATE_INTERVAL = 0.5; // seconds
 
@@ -107,7 +107,7 @@ export class Enemy {
   /** Notify this enemy that the key was collected on its floor — start "smelling" the player */
   setKeyCollected(collected: boolean) {
     if (collected && !this.keyCollected) {
-      console.log(`[Enemy z${this.patrolZone} f${this.floorIndex}] KEY COLLECTED — switching to HUNT mode`);
+      console.debug(`[Enemy z${this.patrolZone} f${this.floorIndex}] KEY COLLECTED — switching to HUNT mode`);
     }
     this.keyCollected = collected;
   }
@@ -299,7 +299,7 @@ export class Enemy {
           this.lastKnownPlayerPos = playerPos.clone();
           this.audio.playChannelState(this.channelId, 'spotted');
           this.alertSiblings(playerPos);
-          console.log(`[Enemy z${this.patrolZone} f${this.floorIndex}] SPOTTED player at dist ${distToPlayer.toFixed(1)}`);
+          console.debug(`[Enemy z${this.patrolZone} f${this.floorIndex}] SPOTTED player at dist ${distToPlayer.toFixed(1)}`);
         } else if (this.investigateTimer > 0) {
           // Investigating an alert or last-known position
           this.investigateTimer -= dt;
@@ -323,7 +323,7 @@ export class Enemy {
 
         const effectiveLoseRange = flashlightOn ? LOSE_RANGE : LOSE_RANGE_DARK;
         if (!canSee && distToPlayer > effectiveLoseRange) {
-          console.log(`[Enemy z${this.patrolZone} f${this.floorIndex}] LOST player at dist ${distToPlayer.toFixed(1)}`);
+          console.debug(`[Enemy z${this.patrolZone} f${this.floorIndex}] LOST player at dist ${distToPlayer.toFixed(1)}`);
           // Lost the player — validate position (chase beeline may have pushed into walls)
           this.snapToNearestReachable();
           // Start investigating the area
@@ -363,6 +363,22 @@ export class Enemy {
       this.soundVirtualPos.x, this.soundVirtualPos.y, this.soundVirtualPos.z
     );
     this.audio.updateChannelOcclusion(this.channelId, distToPlayer, this.soundWallCount);
+
+    // Rear-source attenuation: dot product of player forward vs direction to sound source
+    // rearFactor: 0 = sound in front, 1 = sound directly behind
+    const camFwd = new THREE.Vector3();
+    camera.getWorldDirection(camFwd);
+    camFwd.y = 0;
+    camFwd.normalize();
+    const toSound = this.soundVirtualPos.clone().sub(playerPos);
+    toSound.y = 0;
+    const toSoundLen = toSound.length();
+    if (toSoundLen > 0.1) {
+      toSound.divideScalar(toSoundLen);
+      const dot = camFwd.dot(toSound); // 1=front, -1=behind
+      const rearFactor = Math.max(0, -dot); // 0 when in front/side, ramps to 1 behind
+      this.audio.updateChannelRear(this.channelId, rearFactor);
+    }
 
     // Caught?
     return distToPlayer < CATCH_DISTANCE;
@@ -466,6 +482,13 @@ export class Enemy {
       }
     }
     this.soundWallCount = wallCount;
+
+    // Direct visibility shortcut: no walls between player and enemy,
+    // skip BFS direction approximation and use the real enemy position
+    if (wallCount === 0) {
+      this.soundVirtualPos.copy(this.pos);
+      return;
+    }
 
     // Determine sound arrival direction from the first 1-2 BFS steps
     // This is the corridor opening the sound comes through
@@ -625,7 +648,7 @@ export class Enemy {
 
       const myCell = this.maze.worldToCell(this.pos.x, this.pos.z, this.floorIndex);
       const tgtCell = this.maze.worldToCell(this.searchTarget.x, this.searchTarget.z, this.floorIndex);
-      console.log(
+      console.debug(
         `[Enemy z${this.patrolZone} f${this.floorIndex}] new target ` +
         `(${myCell.x},${myCell.z})→(${tgtCell.x},${tgtCell.z}) | ` +
         `reason: ${reason} | mode: roam | ` +
@@ -679,7 +702,7 @@ export class Enemy {
 
       const myCell = this.maze.worldToCell(this.pos.x, this.pos.z, this.floorIndex);
       const tgtCell = this.maze.worldToCell(this.searchTarget.x, this.searchTarget.z, this.floorIndex);
-      console.log(
+      console.debug(
         `[Enemy z${this.patrolZone} f${this.floorIndex}] HUNT → ` +
         `(${myCell.x},${myCell.z})→(${tgtCell.x},${tgtCell.z}) | ` +
         `dist: ${this.pos.distanceTo(this.searchTarget).toFixed(1)} | pathSteps: ${this.path.length}`

@@ -416,16 +416,54 @@ export class MazeGenerator {
     const pick = pool[Math.floor(Math.random() * pool.length)];
     pick.stairs = 'up';
 
+    // Ensure a wall behind the stairs (opposite to the open/approach side)
+    this.ensureWallBehindStairs(fa, pick);
+
     // Force a passable path to the stair on floor B (open the cell if it's solid)
     const bCell = fb.cells[pick.z]?.[pick.x];
     if (bCell) {
       bCell.stairs = 'down';
+      // Also ensure wall behind stairs on floor B
+      this.ensureWallBehindStairs(fb, bCell);
       // Ensure the cell is accessible on floor B
       if (bCell.walls.N && bCell.walls.S && bCell.walls.E && bCell.walls.W) {
         this.openCell(fb.cells, pick.x, pick.z, fb.width, fb.height);
       }
       // Always carve a corridor to entry on floor B for guaranteed reachability
       this.carveHallway(fb.cells, pick.x, pick.z, fb.entryCell.x, fb.entryCell.z, fb.width, fb.height);
+    }
+  }
+
+  /** Ensure there's a wall on the back side of a stair cell.
+   *  "Back" = the side opposite to the open approach direction. */
+  private ensureWallBehindStairs(floor: MazeFloor, cell: Cell) {
+    const x = cell.x, z = cell.z;
+    const openN = !cell.walls.N;
+    const openS = !cell.walls.S;
+    const openE = !cell.walls.E;
+    const openW = !cell.walls.W;
+
+    // Determine approach side (where the player comes from) and close the opposite
+    if (openS && !openN) {
+      // Approach from south → back is north: ensure N wall
+      cell.walls.N = true;
+      if (z > 0) { const nb = floor.cells[z - 1]?.[x]; if (nb) nb.walls.S = true; }
+    } else if (openN && !openS) {
+      cell.walls.S = true;
+      if (z < floor.height - 1) { const nb = floor.cells[z + 1]?.[x]; if (nb) nb.walls.N = true; }
+    } else if (openE && !openW) {
+      cell.walls.W = true;
+      if (x > 0) { const nb = floor.cells[z]?.[x - 1]; if (nb) nb.walls.E = true; }
+    } else if (openW && !openE) {
+      cell.walls.E = true;
+      if (x < floor.width - 1) { const nb = floor.cells[z]?.[x + 1]; if (nb) nb.walls.W = true; }
+    } else if (openS) {
+      // Multiple open — approach from south, close north
+      cell.walls.N = true;
+      if (z > 0) { const nb = floor.cells[z - 1]?.[x]; if (nb) nb.walls.S = true; }
+    } else if (openN) {
+      cell.walls.S = true;
+      if (z < floor.height - 1) { const nb = floor.cells[z + 1]?.[x]; if (nb) nb.walls.N = true; }
     }
   }
 
@@ -679,24 +717,69 @@ export class MazeGenerator {
   getItemCells(floorIdx: number, count: number): Cell[] {
     const floor = this.floors[floorIdx];
     const reachable = this.floodFill(floorIdx, floor.entryCell.x, floor.entryCell.z);
+    const ex = floor.entryCell.x, ez = floor.entryCell.z;
+    // Scale placement distances by map size (base reference: 21×21)
+    const mapDim = Math.min(floor.width, floor.height);
+    const scale = mapDim / 21;
+    const MIN_SPAWN_DIST = Math.max(4, Math.floor(4 * scale));
+    const MIN_ITEM_DIST  = Math.max(4, Math.floor(6 * scale));
+    const MIN_POI_DIST   = Math.max(4, Math.floor(5 * scale));
+
+    // Collect positions of stairs and exit to keep items away from them
+    const poiPositions: { x: number; z: number }[] = [];
+    for (let z = 0; z < floor.height; z++) {
+      for (let x = 0; x < floor.width; x++) {
+        const c = floor.cells[z]?.[x];
+        if (c && (c.stairs || c.isExit)) poiPositions.push({ x, z });
+      }
+    }
+
     const candidates = reachable.filter(c =>
       !c.stairs && !c.isExit && !c.hasObstacle &&
-      !(c.x <= 3 && c.z <= 3) // not near spawn
+      Math.abs(c.x - ex) + Math.abs(c.z - ez) >= MIN_SPAWN_DIST
     );
-    // Sort by distance from entry, pick spread-out cells
-    const ex = floor.entryCell.x, ez = floor.entryCell.z;
+
+    // Sort farthest from entry first for better spread
     candidates.sort((a, b) => {
       const dA = Math.abs(a.x - ex) + Math.abs(a.z - ez);
       const dB = Math.abs(b.x - ex) + Math.abs(b.z - ez);
-      return dB - dA; // farthest first
+      return dB - dA;
     });
-    // Pick from different distance bands for spread
+
+    // Greedy pick: each item must be far from picked items AND stairs/exit
     const result: Cell[] = [];
-    const bandSize = Math.max(1, Math.floor(candidates.length / count));
-    for (let i = 0; i < count && i * bandSize < candidates.length; i++) {
-      const band = candidates.slice(i * bandSize, (i + 1) * bandSize);
-      result.push(band[Math.floor(Math.random() * band.length)]);
+    for (const c of candidates) {
+      if (result.length >= count) break;
+
+      // Must be far from stairs/exit
+      let tooClose = false;
+      for (const poi of poiPositions) {
+        if (Math.sqrt((c.x - poi.x) ** 2 + (c.z - poi.z) ** 2) < MIN_POI_DIST) {
+          tooClose = true; break;
+        }
+      }
+      if (tooClose) continue;
+
+      // Must be far from already-picked items
+      for (const p of result) {
+        if (Math.sqrt((c.x - p.x) ** 2 + (c.z - p.z) ** 2) < MIN_ITEM_DIST) {
+          tooClose = true; break;
+        }
+      }
+      if (tooClose) continue;
+
+      result.push(c);
     }
+
+    // Fallback: if strict distances couldn't fill all slots, relax and pick remaining
+    if (result.length < count) {
+      for (const c of candidates) {
+        if (result.length >= count) break;
+        if (result.includes(c)) continue;
+        result.push(c);
+      }
+    }
+
     return result;
   }
 }
@@ -877,17 +960,17 @@ export class MazeRenderer {
     const openE = !cell.walls.E && x < floor.width - 1 && !isSolid(floor.cells[z]?.[x + 1]);
     const openW = !cell.walls.W && x > 0 && !isSolid(floor.cells[z]?.[x - 1]);
 
-    // Face toward the open side (stairs ascend from the open side upward)
-    if (openS && !openN) return 0;               // face south (+Z)
-    if (openN && !openS) return Math.PI;          // face north (-Z)
-    if (openE && !openW) return -Math.PI / 2;     // face east (+X)
-    if (openW && !openE) return Math.PI / 2;      // face west (-X)
+    // Face AWAY from the open side (player approaches from open side, stairs ascend away)
+    if (openS && !openN) return Math.PI;          // open south → face north
+    if (openN && !openS) return 0;                // open north → face south
+    if (openE && !openW) return Math.PI / 2;      // open east → face west
+    if (openW && !openE) return -Math.PI / 2;     // open west → face east
 
     // Multiple open sides — prefer S, then N, E, W
-    if (openS) return 0;
-    if (openN) return Math.PI;
-    if (openE) return -Math.PI / 2;
-    if (openW) return Math.PI / 2;
+    if (openS) return Math.PI;
+    if (openN) return 0;
+    if (openE) return Math.PI / 2;
+    if (openW) return -Math.PI / 2;
 
     return 0; // fallback: face south
   }
