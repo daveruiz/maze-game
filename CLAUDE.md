@@ -2,6 +2,10 @@
 
 This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
+## Git Workflow
+
+This is a personal project — push commits directly to `master`. Do not leave work on feature branches; always merge or push to master before ending a session.
+
 ## Project Overview
 
 "Dad's Nightmare" — a 3D first-person horror maze game built with Three.js, TypeScript, and Vite. The player navigates through 3 floors (Basement → House → Village), avoiding an AI enemy, collecting items (key, map, compass), and finding stairs/exit. Features flashlight with battery, spatialized audio, procedural textures, and stealth mechanics.
