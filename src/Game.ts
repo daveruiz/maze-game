@@ -53,6 +53,8 @@ export class Game {
   /** Per-floor lights (for culling) */
   private floorLights: THREE.Light[][] = [];
   private globalLights: THREE.Light[] = [];  // lights that are always visible
+  /** All positional lights for distance culling */
+  private positionalLights: THREE.PointLight[] = [];
 
   // Death animation
   private dying = false;
@@ -335,6 +337,12 @@ export class Game {
     // Pass floor lights to maze renderer too
     this.mazeRenderer.floorLights = this.floorLights;
 
+    // Collect all positional lights for distance culling
+    this.positionalLights = [];
+    this.scene.traverse(obj => {
+      if (obj instanceof THREE.PointLight) this.positionalLights.push(obj);
+    });
+
     this.updateFog(0);
   }
 
@@ -474,6 +482,18 @@ export class Game {
 
     // Floor culling — only render the active floor
     this.setVisibleFloor(this.player.floorIndex);
+
+    // Distance-cull positional lights beyond fog range; skip all when fullbright is on
+    if (this.debugLight) {
+      for (const light of this.positionalLights) light.visible = false;
+    } else {
+      const LIGHT_CULL_DIST_SQ = 35 * 35;
+      for (const light of this.positionalLights) {
+        const dx = light.position.x - pp.x;
+        const dz = light.position.z - pp.z;
+        light.visible = (dx * dx + dz * dz) < LIGHT_CULL_DIST_SQ;
+      }
+    }
 
     // Audio listener
     this.audio.setListenerPose(pp.x, pp.y, pp.z, fwd.x, fwd.y, fwd.z);
