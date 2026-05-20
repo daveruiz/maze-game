@@ -91,8 +91,8 @@ export class Game {
 
   constructor(container: HTMLElement) {
     this.renderer = new THREE.WebGLRenderer({ antialias: false });
-    // Halve render resolution for performance — still looks fine on HiDPI screens
-    this.renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2) * 0.5);
+    // Default: native resolution capped at 2× DPR; debug menu can lower it
+    this.renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
     this.renderer.setSize(window.innerWidth, window.innerHeight);
     this.renderer.shadowMap.enabled = true;
     container.appendChild(this.renderer.domElement);
@@ -964,6 +964,19 @@ export class Game {
     const revealCb = document.getElementById('dbg-revealmap') as HTMLInputElement;
     revealCb.addEventListener('change', () => {
       this.debugRevealMap = revealCb.checked;
+    });
+
+    // Pixel scale buttons (resolution downscale for performance)
+    const baseDPR = Math.min(window.devicePixelRatio, 2);
+    menu.querySelectorAll<HTMLButtonElement>('button[data-pixelscale]').forEach(btn => {
+      btn.addEventListener('click', () => {
+        const scale = parseInt(btn.dataset.pixelscale ?? '1', 10);
+        this.renderer.setPixelRatio(baseDPR / scale);
+        this.renderer.setSize(window.innerWidth, window.innerHeight);
+        // Update active state
+        menu.querySelectorAll<HTMLButtonElement>('button[data-pixelscale]').forEach(b => b.classList.remove('active'));
+        btn.classList.add('active');
+      });
     });
   }
 
