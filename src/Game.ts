@@ -90,9 +90,9 @@ export class Game {
   private staminaFillEl!:    HTMLElement;
 
   constructor(container: HTMLElement) {
-    this.renderer = new THREE.WebGLRenderer({ antialias: true });
-    // Cap pixel ratio to avoid GPU overload on high-DPI devices (3x, 4x screens)
-    this.renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+    this.renderer = new THREE.WebGLRenderer({ antialias: false });
+    // Halve render resolution for performance — still looks fine on HiDPI screens
+    this.renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2) * 0.5);
     this.renderer.setSize(window.innerWidth, window.innerHeight);
     this.renderer.shadowMap.enabled = true;
     container.appendChild(this.renderer.domElement);

@@ -426,11 +426,12 @@ export class Enemy {
       const cell = floor.cells[cur.z]?.[cur.x];
       if (!cell) continue;
 
+      // A passage exists only when NEITHER side has a wall (mirrors renderer logic)
       const neighbors: { x: number; z: number }[] = [];
-      if (inBounds(cur.x, cur.z - 1) && (!cell.walls.N || !floor.cells[cur.z - 1]?.[cur.x]?.walls.S)) neighbors.push({ x: cur.x, z: cur.z - 1 });
-      if (inBounds(cur.x, cur.z + 1) && (!cell.walls.S || !floor.cells[cur.z + 1]?.[cur.x]?.walls.N)) neighbors.push({ x: cur.x, z: cur.z + 1 });
-      if (inBounds(cur.x + 1, cur.z) && (!cell.walls.E || !floor.cells[cur.z]?.[cur.x + 1]?.walls.W)) neighbors.push({ x: cur.x + 1, z: cur.z });
-      if (inBounds(cur.x - 1, cur.z) && (!cell.walls.W || !floor.cells[cur.z]?.[cur.x - 1]?.walls.E)) neighbors.push({ x: cur.x - 1, z: cur.z });
+      if (inBounds(cur.x, cur.z - 1) && !cell.walls.N && !floor.cells[cur.z - 1]?.[cur.x]?.walls.S) neighbors.push({ x: cur.x, z: cur.z - 1 });
+      if (inBounds(cur.x, cur.z + 1) && !cell.walls.S && !floor.cells[cur.z + 1]?.[cur.x]?.walls.N) neighbors.push({ x: cur.x, z: cur.z + 1 });
+      if (inBounds(cur.x + 1, cur.z) && !cell.walls.E && !floor.cells[cur.z]?.[cur.x + 1]?.walls.W) neighbors.push({ x: cur.x + 1, z: cur.z });
+      if (inBounds(cur.x - 1, cur.z) && !cell.walls.W && !floor.cells[cur.z]?.[cur.x - 1]?.walls.E) neighbors.push({ x: cur.x - 1, z: cur.z });
 
       for (const n of neighbors) {
         const key = `${n.x},${n.z}`;
@@ -1029,11 +1030,12 @@ export class Enemy {
       const cell = floor.cells[cur.z]?.[cur.x];
       if (!cell) continue;
 
+      // A passage exists only when NEITHER side has a wall (mirrors renderer logic)
       const neighbors: { x: number; z: number }[] = [];
-      if (inBounds(cur.x, cur.z - 1) && (!cell.walls.N || !floor.cells[cur.z - 1]?.[cur.x]?.walls.S)) neighbors.push({ x: cur.x, z: cur.z - 1 });
-      if (inBounds(cur.x, cur.z + 1) && (!cell.walls.S || !floor.cells[cur.z + 1]?.[cur.x]?.walls.N)) neighbors.push({ x: cur.x, z: cur.z + 1 });
-      if (inBounds(cur.x + 1, cur.z) && (!cell.walls.E || !floor.cells[cur.z]?.[cur.x + 1]?.walls.W)) neighbors.push({ x: cur.x + 1, z: cur.z });
-      if (inBounds(cur.x - 1, cur.z) && (!cell.walls.W || !floor.cells[cur.z]?.[cur.x - 1]?.walls.E)) neighbors.push({ x: cur.x - 1, z: cur.z });
+      if (inBounds(cur.x, cur.z - 1) && !cell.walls.N && !floor.cells[cur.z - 1]?.[cur.x]?.walls.S) neighbors.push({ x: cur.x, z: cur.z - 1 });
+      if (inBounds(cur.x, cur.z + 1) && !cell.walls.S && !floor.cells[cur.z + 1]?.[cur.x]?.walls.N) neighbors.push({ x: cur.x, z: cur.z + 1 });
+      if (inBounds(cur.x + 1, cur.z) && !cell.walls.E && !floor.cells[cur.z]?.[cur.x + 1]?.walls.W) neighbors.push({ x: cur.x + 1, z: cur.z });
+      if (inBounds(cur.x - 1, cur.z) && !cell.walls.W && !floor.cells[cur.z]?.[cur.x - 1]?.walls.E) neighbors.push({ x: cur.x - 1, z: cur.z });
 
       for (const n of neighbors) {
         const key = `${n.x},${n.z}`;
@@ -1090,10 +1092,10 @@ export class Enemy {
         }
       };
 
-      if (!cell.walls.N || !floor.cells[z - 1]?.[x]?.walls.S) tryMove(x, z - 1);
-      if (!cell.walls.S || !floor.cells[z + 1]?.[x]?.walls.N) tryMove(x, z + 1);
-      if (!cell.walls.E || !floor.cells[z]?.[x + 1]?.walls.W) tryMove(x + 1, z);
-      if (!cell.walls.W || !floor.cells[z]?.[x - 1]?.walls.E) tryMove(x - 1, z);
+      if (!cell.walls.N && !floor.cells[z - 1]?.[x]?.walls.S) tryMove(x, z - 1);
+      if (!cell.walls.S && !floor.cells[z + 1]?.[x]?.walls.N) tryMove(x, z + 1);
+      if (!cell.walls.E && !floor.cells[z]?.[x + 1]?.walls.W) tryMove(x + 1, z);
+      if (!cell.walls.W && !floor.cells[z]?.[x - 1]?.walls.E) tryMove(x - 1, z);
     }
     return dist;
   }
@@ -1221,11 +1223,11 @@ export class Enemy {
         }
       };
 
-      // Check both sides of each wall for robustness
-      if (!cell.walls.N || !floor.cells[z - 1]?.[x]?.walls.S) tryMove(x, z - 1);
-      if (!cell.walls.S || !floor.cells[z + 1]?.[x]?.walls.N) tryMove(x, z + 1);
-      if (!cell.walls.E || !floor.cells[z]?.[x + 1]?.walls.W) tryMove(x + 1, z);
-      if (!cell.walls.W || !floor.cells[z]?.[x - 1]?.walls.E) tryMove(x - 1, z);
+      // Passage only when neither side has a wall
+      if (!cell.walls.N && !floor.cells[z - 1]?.[x]?.walls.S) tryMove(x, z - 1);
+      if (!cell.walls.S && !floor.cells[z + 1]?.[x]?.walls.N) tryMove(x, z + 1);
+      if (!cell.walls.E && !floor.cells[z]?.[x + 1]?.walls.W) tryMove(x + 1, z);
+      if (!cell.walls.W && !floor.cells[z]?.[x - 1]?.walls.E) tryMove(x - 1, z);
     }
     return result;
   }
