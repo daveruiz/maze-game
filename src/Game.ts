@@ -518,8 +518,10 @@ export class Game {
       }
     }
 
-    // Audio listener
+    // Audio listener + footsteps
     this.audio.setListenerPose(pp.x, pp.y, pp.z, fwd.x, fwd.y, fwd.z);
+    if (this.player.justJumped) this.audio.playJumpSteps();
+    this.audio.updateFootsteps(dt, this.player.currentSpeed, 7.5, this.player.onGround, this.player.justLanded, this.player.landingImpact, this.player.crouching);
 
     // Enemies + proximity drone
     let nearestDist = Infinity;
@@ -530,7 +532,7 @@ export class Game {
         enemy.setPlayerHint(pp);
         enemy.setKeyCollected(hasKey === true);
       }
-      const caught = enemy.update(dt, pp, this.player.floorIndex, this.camera, this.flashlightOn);
+      const caught = enemy.update(dt, pp, this.player.floorIndex, this.camera, this.flashlightOn, this.player.noiseLevel);
       if (caught && !caughtBy) {
         caughtBy = enemy;
       }
@@ -621,9 +623,10 @@ export class Game {
     this.flashlightOn = true;
     this.flashlight.intensity = 28.0;
     this.torchLight.intensity = 0.6;
-    // Death audio: explosive stinger + kill chase/drone/enemy sounds
+    // Death audio: explosive stinger + kill chase/drone/enemy sounds/ambience
     this.audio.playDeathStinger();
     this.audio.stopEnemySound();
+    this.audio.stopAmbience();
     this.audio.updateProximityDrone(-1);
     this.audio.updateProximityTension(-1);
   }

@@ -4,7 +4,10 @@ import { MazeGenerator, CELL_SIZE, WALL_HEIGHT, OBSTACLE_HEIGHT } from './Maze';
 const BASE_SPEED    = 3.75;   // halved from 7.5
 const SPRINT_MULT   = 2.0;    // shift doubles speed (back to original 7.5)
 const EXHAUSTED_MULT = 0.5;   // half speed when stamina depleted
+const CROUCH_MULT   = 0.4;   // slow when crouching
+const CROUCH_ON_OBSTACLE_MULT = 0.0; // can't move when crouching on obstacle
 const PLAYER_HEIGHT = 1.6;
+const CROUCH_HEIGHT = 0.7;   // camera height when crouching (bigger drop)
 const PLAYER_RADIUS = 0.65;
 const GRAVITY       = -24;
 const JUMP_FORCE    = 9;
@@ -35,12 +38,40 @@ export class Player {
   private velocity: THREE.Vector3 = new THREE.Vector3(); // horizontal velocity (inertia)
   private verticalVelocity  = 0;
   private isOnGround        = true;
+  private wasOnGround       = true;
+  private _preLandSpeed     = 0;
+  /** True on the frame the player lands after being airborne */
+  justLanded = false;
+  /** Impact speed on landing (0 = soft step-down, higher = harder fall) */
+  landingImpact = 0;
+  /** True on the frame the player jumps */
+  justJumped = false;
+  /** True while the player is on the ground */
+  onGround = true;
   private stairCooldown     = 0;
 
   // Stamina
   stamina   = MAX_STAMINA;
   private exhausted = false; // true when stamina hit 0, clears at 15%
   sprinting = false;
+  crouching = false;
+
+  /**
+   * How much noise the player is making (0 = silent, 1 = max).
+   * Enemies use this to detect the player by sound.
+   * 0 = crouching, ~0.3 = walking, ~0.7 = sprinting, 1.0 = landing from jump
+   */
+  noiseLevel = 0;
+  private smoothedNoise = 0;
+
+  // Head bob
+  private bobPhase = 0;         // oscillation phase (radians)
+  private bobIntensity = 0;     // smoothed intensity (0 = still, 1 = full bob)
+  /** Current horizontal speed — read by Game for footstep timing */
+  currentSpeed = 0;
+
+  // Smooth crouch (camera-only offset, doesn't affect physics)
+  private currentCrouchDip = 0;
 
   constructor(camera: THREE.PerspectiveCamera, maze: MazeGenerator) {
     this.camera = camera;
@@ -90,6 +121,7 @@ export class Player {
       if (e.code === 'Space' && this.isOnGround && this.stamina >= STAMINA_JUMP_COST * 0.5) {
         this.verticalVelocity = JUMP_FORCE;
         this.isOnGround = false;
+        this.justJumped = true;
         this.stamina = Math.max(0, this.stamina - STAMINA_JUMP_COST);
         if (this.stamina <= 0) this.exhausted = true;
       }
@@ -132,6 +164,7 @@ export class Player {
     if (this.isOnGround && this.stamina >= STAMINA_JUMP_COST * 0.5) {
       this.verticalVelocity = JUMP_FORCE;
       this.isOnGround = false;
+      this.justJumped = true;
       this.stamina = Math.max(0, this.stamina - STAMINA_JUMP_COST);
       if (this.stamina <= 0) this.exhausted = true;
     }
@@ -141,12 +174,15 @@ export class Player {
 
   update(dt: number): { stairsUp: boolean; stairsDown: boolean; isExit: boolean } {
     this.stairCooldown -= dt;
+    this.justJumped = false;
 
-    // ── Sprint & stamina ────────────────────────────────────────────────
+    // ── Crouch, Sprint & stamina ──────────────────────────────────────
+    const wantCrouch = !!(this.keys['KeyC'] || this.keys['ControlLeft'] || this.keys['ControlRight']);
     const wantSprint = !!(this.keys['ShiftLeft'] || this.keys['ShiftRight']);
     const hasInput = !!(this.keys['KeyW'] || this.keys['KeyS'] || this.keys['KeyA'] || this.keys['KeyD']
                       || this.keys['ArrowUp'] || this.keys['ArrowDown'] || this.keys['ArrowLeft'] || this.keys['ArrowRight']);
-    this.sprinting = wantSprint && hasInput && this.stamina > 0 && !this.exhausted;
+    this.crouching = wantCrouch && this.isOnGround;
+    this.sprinting = wantSprint && hasInput && this.stamina > 0 && !this.exhausted && !this.crouching;
 
     if (this.sprinting) {
       this.stamina = Math.max(0, this.stamina - STAMINA_SPRINT_DRAIN * dt);
@@ -159,8 +195,14 @@ export class Player {
     }
 
     // ── Speed multiplier ────────────────────────────────────────────────
+    // Check if standing on an obstacle (for crouch-on-obstacle lock)
+    const curCell = this.maze.worldToCell(this.pos.x, this.pos.z, this.floorIndex);
+    const onObstacle = !!this.maze.floors[this.floorIndex]?.cells[curCell.z]?.[curCell.x]?.hasObstacle;
+
     let speedMult = 1.0;
-    if (this.exhausted) speedMult = EXHAUSTED_MULT;
+    if (this.crouching && onObstacle) speedMult = CROUCH_ON_OBSTACLE_MULT;
+    else if (this.crouching) speedMult = CROUCH_MULT;
+    else if (this.exhausted) speedMult = EXHAUSTED_MULT;
     else if (this.sprinting) speedMult = SPRINT_MULT;
 
     const targetSpeed = BASE_SPEED * speedMult;
@@ -212,15 +254,53 @@ export class Player {
     const floor   = this.maze.floors[this.floorIndex];
     const cell    = floor?.cells[cellPos.z]?.[cellPos.x];
     const baseY   = this.floorIndex * (WALL_HEIGHT + 1.0);
+    // Crouch is a camera-only offset — physics always use full PLAYER_HEIGHT
+    const crouchOffset = PLAYER_HEIGHT - CROUCH_HEIGHT; // how much to lower camera
+    const targetCrouchDip = this.crouching ? crouchOffset : 0;
+    const crouchSpeed = 10.0;
+    this.currentCrouchDip += (targetCrouchDip - this.currentCrouchDip) * Math.min(1, crouchSpeed * dt);
+
     const groundY = baseY + (cell?.hasObstacle ? OBSTACLE_HEIGHT : 0) + PLAYER_HEIGHT;
 
     if (this.pos.y <= groundY) {
+      this._preLandSpeed = Math.abs(this.verticalVelocity);
       this.pos.y = groundY;
       this.verticalVelocity = 0;
       this.isOnGround = true;
     } else {
       this.isOnGround = false;
     }
+
+    // Expose landing event + impact magnitude
+    this.justLanded = this.isOnGround && !this.wasOnGround;
+    if (this.justLanded) {
+      // Impact proportional to how fast we were falling (verticalVelocity is already 0 here,
+      // so we track it before the ground clamp — use wasOnGround + gravity to estimate)
+      // We stored pre-clamp velocity below
+      this.landingImpact = this._preLandSpeed;
+    }
+    this.onGround = this.isOnGround;
+    this.wasOnGround = this.isOnGround;
+
+    // ── Noise level (for enemy hearing) ─────────────────────────────────
+    const hSpeed = this.velocity.length();
+    this.currentSpeed = hSpeed;
+    let targetNoise = 0;
+    if (this.crouching) {
+      targetNoise = 0; // completely silent
+    } else if (this.justLanded) {
+      targetNoise = Math.min(1, this.landingImpact / 10); // landing spike
+    } else if (!this.isOnGround) {
+      targetNoise = 0.05; // airborne — nearly silent
+    } else if (this.sprinting) {
+      targetNoise = 0.7;
+    } else if (hSpeed > 0.3) {
+      targetNoise = 0.3; // walking
+    }
+    // Smooth noise (fast attack, slower decay so landing spikes linger briefly)
+    const nSmooth = targetNoise > this.smoothedNoise ? 15.0 : 3.0;
+    this.smoothedNoise += (targetNoise - this.smoothedNoise) * Math.min(1, nSmooth * dt);
+    this.noiseLevel = this.smoothedNoise;
 
     // Ceiling clamp — prevent jumping through ceiling on floors that have one
     if (floor?.theme.hasCeiling) {
@@ -234,11 +314,41 @@ export class Player {
     // Wall depenetration
     this.enforceWallMargin();
 
+    // ── Head bob ─────────────────────────────────────────────────────────
+    const maxSpeed = BASE_SPEED * SPRINT_MULT;
+    const speedT = Math.min(1, hSpeed / maxSpeed);
+
+    // Smooth bob intensity (ramps up/down naturally)
+    const targetIntensity = this.isOnGround && hSpeed > 0.3 ? speedT : 0;
+    const bobSmooth = targetIntensity > this.bobIntensity ? 8.0 : 4.0; // ramp up faster
+    this.bobIntensity += (targetIntensity - this.bobIntensity) * Math.min(1, bobSmooth * dt);
+
+    // Frequency synced with footstep interval (0.5s walk → 0.3s sprint)
+    const stepInterval = 0.5 - speedT * 0.2;
+    const bobFreq = 1 / stepInterval; // ~2.0 Hz walk → ~3.3 Hz sprint
+    this.bobPhase += bobFreq * dt * Math.PI * 2;
+
+    // Vertical bob: subtle — max ~3cm at full sprint
+    const BOB_Y = 0.03;
+    // Horizontal sway: very subtle lateral rock — max ~1.5cm
+    const BOB_X = 0.015;
+    // Slight pitch tilt for natural head movement
+    const BOB_PITCH = 0.004;
+
+    const bobY = Math.sin(this.bobPhase) * BOB_Y * this.bobIntensity;
+    const bobX = Math.sin(this.bobPhase * 0.5) * BOB_X * this.bobIntensity;
+    const bobPitch = Math.sin(this.bobPhase) * BOB_PITCH * this.bobIntensity;
+
     // Camera
     this.camera.position.copy(this.pos);
+    this.camera.position.y += bobY - this.currentCrouchDip;
+    // Apply lateral sway in camera-local right direction
+    this.camera.position.x += Math.cos(this.yaw) * bobX;
+    this.camera.position.z -= Math.sin(this.yaw) * bobX;
+
     this.camera.rotation.order = 'YXZ';
     this.camera.rotation.y = this.yaw;
-    this.camera.rotation.x = this.pitch;
+    this.camera.rotation.x = this.pitch + bobPitch;
 
     // Stair / exit detection
     if (!cell) return { stairsUp: false, stairsDown: false, isExit: false };

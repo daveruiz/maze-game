@@ -13,6 +13,7 @@ const LOSE_RANGE_DARK   = 15;   // loses sight sooner in the dark
 const CATCH_DISTANCE    = 1.2;
 const PATH_UPDATE_INTERVAL = 0.5; // seconds
 
+
 // Separation — enemies prefer patrol targets far from siblings
 const SEPARATION_RADIUS  = 12;  // world units — penalise targets near siblings
 
@@ -242,7 +243,7 @@ export class Enemy {
     this.searchTimer = this.investigateTimer + 1; // don't override with random search
   }
 
-  update(dt: number, playerPos: THREE.Vector3, playerFloor: number, camera: THREE.Camera, flashlightOn = true): boolean {
+  update(dt: number, playerPos: THREE.Vector3, playerFloor: number, camera: THREE.Camera, flashlightOn = true, playerNoise = 0): boolean {
     // Only active when player is on the same floor
     if (this.homeFloor !== playerFloor) {
       this.mesh.visible = false;
@@ -291,8 +292,20 @@ export class Enemy {
     // cells far from siblings). No runtime movement force — avoids pushing into walls.
 
     const distToPlayer = this.pos.distanceTo(playerPos);
-    const effectiveSight = flashlightOn ? SIGHT_RANGE : SIGHT_RANGE_DARK;
+
+    // Detection range: flashlight on = full sight, off = noise-based
+    // Crouching in the dark (noise ~0) = must be within 2 units to detect
+    // Walking in the dark (noise ~0.3) = ~7 units
+    // Sprinting in the dark (noise ~0.7) = ~18 units
+    // Landing (noise ~1.0) = ~25 units
+    const DARK_MIN_RANGE = 1;    // crouching / silent — nearly invisible
+    const DARK_MAX_RANGE = 19;   // loud noise (landing)
+    const darkRange = DARK_MIN_RANGE + playerNoise * (DARK_MAX_RANGE - DARK_MIN_RANGE);
+    const effectiveSight = flashlightOn ? SIGHT_RANGE : darkRange;
     const canSee = this.hasLineOfSight(playerPos) && distToPlayer < effectiveSight;
+
+    // Hearing: in the dark, noise also triggers investigation even without LOS
+    const canHear = !flashlightOn && playerNoise > 0.1 && distToPlayer < darkRange;
 
     // ── FSM ──────────────────────────────────────────────────────────────
     switch (this.state) {
@@ -304,6 +317,14 @@ export class Enemy {
           this.audio.playChannelState(this.channelId, 'spotted');
           this.alertSiblings(playerPos);
           console.debug(`[Enemy z${this.patrolZone} f${this.floorIndex}] SPOTTED player at dist ${distToPlayer.toFixed(1)}`);
+        } else if (canHear) {
+          // Heard footsteps — investigate toward player position
+          this.investigateTarget = playerPos.clone();
+          this.lastKnownPlayerPos = playerPos.clone();
+          this.searchTarget = this.investigateTarget;
+          this.path = this.smoothPath(this.bfsPath(this.pos, this.investigateTarget, true));
+          this.investigateTimer = 6 + playerNoise * 4; // louder = investigate longer
+          this.reachedLastKnown = false;
         } else if (this.investigateTimer > 0) {
           // Investigating an alert or last-known position
           this.investigateTimer -= dt;
@@ -321,7 +342,7 @@ export class Enemy {
 
       case EnemyState.CHASING:
         this.audio.playChannelState(this.channelId, 'chasing');
-        if (canSee) {
+        if (canSee || canHear) {
           this.lastKnownPlayerPos = playerPos.clone();
         }
 
@@ -940,7 +961,7 @@ export class Enemy {
     const floor = this.maze.floors[this.floorIndex];
     if (!floor) return;
 
-    const MARGIN = 0.4;  // tighter than player — enemies navigate narrow corridors better
+    const MARGIN = 0.5;  // wall margin for enemy collision
     const cx = Math.round(this.pos.x / CELL_SIZE);
     const cz = Math.round(this.pos.z / CELL_SIZE);
 
@@ -1224,8 +1245,7 @@ export class Enemy {
       const tryMove = (nx: number, nz: number) => {
         const key = `${nx},${nz}`;
         if (nx >= 0 && nx < W && nz >= 0 && nz < H && !visited.has(key)) {
-          const nc = floor.cells[nz]?.[nx];
-          if (nc?.hasObstacle) return; // can't enter obstacle cells
+          // Enemies ignore obstacles — they can walk through them
           visited.add(key);
           queue.push({ x: nx, z: nz });
         }

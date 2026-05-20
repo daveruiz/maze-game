@@ -333,6 +333,8 @@ export class AudioManager {
   // Floor ambience — multiple spatialized sources per floor
   private ambienceSources: AudioBufferSourceNode[] = [];
   private currentAmbienceFloor = -1;
+  private pendingAmbienceFloor = -1;
+  private pendingAmbiencePositions: { x: number; y: number; z: number }[] = [];
 
   init() {
     this.ctx = new AudioContext();
@@ -351,19 +353,26 @@ export class AudioManager {
     compressor.release.value = 0.25;   // 250ms — smooth release
     compressor.connect(this.ctx.destination);
 
-    // Global reverb: master → convolver → wet gain → compressor
-    //                master → dry (direct) → compressor
+    // Global reverb: master → mono downmix → convolver → wet gain → compressor
+    //                master → dry (direct, keeps stereo/panning) → compressor
     const convolver = this.ctx.createConvolver();
     convolver.buffer = this.generateImpulseResponse(1.6, 5.0);
 
     const wetGain = this.ctx.createGain();
     wetGain.gain.value = 0.75;   // reverb mix level
 
+    // Mono downmix before convolver — reverb is a diffuse room effect,
+    // it shouldn't carry stereo/HRTF positioning (critical for headphones)
+    const monoGain = this.ctx.createGain();
+    monoGain.channelCount = 1;
+    monoGain.channelCountMode = 'explicit';
+
     const dryGain = this.ctx.createGain();
     dryGain.gain.value = 1.0;
 
     this.masterGain.connect(dryGain).connect(compressor);
-    this.masterGain.connect(convolver).connect(wetGain).connect(compressor);
+    // Reverb path: master → mono downmix → convolver → wet → compressor
+    this.masterGain.connect(monoGain).connect(convolver).connect(wetGain).connect(compressor);
 
     // Keep reference so we can adjust reverb per floor
     this.reverbSend = wetGain;
@@ -379,6 +388,7 @@ export class AudioManager {
     // Generate procedural buffers
     this.shared.searchingBuf = this.makeSearchingBuffer();
     this.shared.chasingBuf   = this.makeChasingBuffer();
+    this.footstepBuf         = this.makeFootstepBuffer();
 
     // Load MP3s
     this.loadMp3Buffers();
@@ -471,6 +481,11 @@ export class AudioManager {
         ch.startChainsLoop(this.shared.chainsBuf, soundConfig.enemyLoop.volume);
       }
     }
+
+    // Retry floor ambience if it was requested before buffers were ready
+    if (this.pendingAmbienceFloor >= 0 && this.currentAmbienceFloor !== this.pendingAmbienceFloor) {
+      this.setFloorAmbience(this.pendingAmbienceFloor, this.pendingAmbiencePositions);
+    }
   }
 
   resume() { this.ctx?.resume(); }
@@ -516,6 +531,8 @@ export class AudioManager {
   /** Stop all enemy channels */
   stopEnemySound() {
     for (const ch of this.channels.values()) ch.stop();
+    this.channels.clear();
+    this.nextChannelId = 0;
   }
 
   /** Update listener (player) position and orientation */
@@ -530,6 +547,101 @@ export class AudioManager {
       (l as any).setPosition(px, py, pz);
       (l as any).setOrientation(fx, fy, fz, 0, 1, 0);
     }
+  }
+
+  // ── Footsteps ──────────────────────────────────────────────────────────
+
+  private footstepBuf: AudioBuffer | null = null;
+  private footstepTimer = 0;
+  private footstepPhase = 0; // alternates left/right for stereo variation
+
+  /** Call once after init to generate the footstep buffer */
+  private makeFootstepBuffer(): AudioBuffer {
+    const ctx = this.ctx!;
+    const sr = ctx.sampleRate;
+    const dur = 0.02; // very short tap
+    const buf = ctx.createBuffer(1, Math.ceil(sr * dur), sr);
+    const data = buf.getChannelData(0);
+    for (let i = 0; i < data.length; i++) {
+      const t = i / sr;
+      // Sharp attack, fast decay
+      const env = Math.exp(-t * 200) * (1 - Math.exp(-t * 4000));
+      // Kick-like thump — mostly low-end, minimal noise
+      const tap = Math.sin(2 * Math.PI * 60 * t) * 0.6
+                + Math.sin(2 * Math.PI * 120 * t) * 0.3
+                + (Math.random() - 0.5) * 0.1;
+      data[i] = tap * env;
+    }
+    return buf;
+  }
+
+  /**
+   * Tick footsteps based on player speed. Call every frame with dt.
+   * @param dt        Frame delta time
+   * @param speed     Current horizontal speed
+   * @param maxSpeed  Max speed (for interval scaling)
+   * @param onGround  Is the player on the ground?
+   * @param justLanded Did the player just land this frame?
+   */
+  updateFootsteps(dt: number, speed: number, maxSpeed: number, onGround: boolean, justLanded: boolean, landingImpact = 0, crouching = false) {
+    if (!this.ctx || !this.footstepBuf) return;
+
+    // Landing thump — always plays (even crouching, you still land)
+    if (justLanded && landingImpact > 1) {
+      const t = Math.min(1, (landingImpact - 1) / 10);
+      const vol = 1.0 + t * 2.0;
+      this.playFootstep(1.0, vol);
+      this.footstepTimer = 0;
+      return;
+    }
+
+    // No walking footsteps when crouching, airborne, or stationary
+    if (crouching || !onGround || speed < 0.5) {
+      this.footstepTimer = 0;
+      return;
+    }
+
+    const speedT = Math.min(1, speed / maxSpeed);
+    // Step interval: slow walk ~0.5s → sprint ~0.3s
+    const interval = 0.5 - speedT * 0.2;
+
+    this.footstepTimer += dt;
+    if (this.footstepTimer >= interval) {
+      this.footstepTimer -= interval;
+      this.playFootstep(speedT);
+    }
+  }
+
+  /** Play a double-step (jump takeoff sound) — two quick taps */
+  playJumpSteps() {
+    if (!this.ctx || !this.footstepBuf) return;
+    this.playFootstep(0.8, 1.2);
+    // Second step with slight delay
+    setTimeout(() => this.playFootstep(0.6, 0.8), 60);
+  }
+
+  private playFootstep(speedT: number, volumeMult = 1.0) {
+    if (!this.ctx || !this.footstepBuf) return;
+
+    const src = this.ctx.createBufferSource();
+    src.buffer = this.footstepBuf;
+
+    // Pitch: walking stays neutral, landings slightly higher (snappier impact)
+    const impactPitch = volumeMult > 1 ? 1.0 + (volumeMult - 1) * 0.15 : 1.0;
+    const basePitch = 1.0; // keep walking pitch neutral
+    src.playbackRate.value = (basePitch + (Math.random() - 0.5) * 0.1) * 0.25 * impactPitch; // 2 octaves down
+
+    // Stereo panner: alternate left/right foot
+    const panner = this.ctx.createStereoPanner();
+    panner.pan.value = (this.footstepPhase % 2 === 0 ? -0.15 : 0.15);
+    this.footstepPhase++;
+
+    // Volume scales with speed — louder when sprinting
+    const gain = this.ctx.createGain();
+    gain.gain.value = (0.02 + speedT * 0.06) * volumeMult; // 0.02 walk → 0.08 sprint
+
+    src.connect(gain).connect(panner).connect(this.masterGain);
+    src.start();
   }
 
   // ── Procedural buffer synthesis (shared) ────────────────────────────────
@@ -1137,13 +1249,18 @@ export class AudioManager {
   setFloorAmbience(floorIndex: number, positions: { x: number; y: number; z: number }[]) {
     if (!this.ctx || floorIndex === this.currentAmbienceFloor) return;
 
-    // Stop current ambience sources
-    this.stopAmbience();
-    this.currentAmbienceFloor = floorIndex;
+    // Always store latest request so we can retry after buffers load
+    this.pendingAmbienceFloor = floorIndex;
+    this.pendingAmbiencePositions = positions;
 
     const buf = this.shared.ambienceBufs[floorIndex];
     const config = soundConfig.floorAmbience[floorIndex];
+    // If buffer hasn't loaded yet, don't update currentAmbienceFloor so we retry after load
     if (!buf || !config) return;
+
+    // Stop current ambience sources
+    this.stopAmbience();
+    this.currentAmbienceFloor = floorIndex;
 
     const count = Math.min(config.sources, positions.length);
     for (let i = 0; i < count; i++) {
@@ -1172,11 +1289,12 @@ export class AudioManager {
     }
   }
 
-  private stopAmbience() {
+  stopAmbience() {
     for (const src of this.ambienceSources) {
       try { src.stop(); } catch {}
     }
     this.ambienceSources = [];
+    this.currentAmbienceFloor = -1;
   }
 
   /** Silence every sound source without closing the AudioContext (safe to restart). */
@@ -1195,7 +1313,6 @@ export class AudioManager {
     if (this.proxOsc4) { try { this.proxOsc4.stop(); } catch {} this.proxOsc4 = null; }
     if (this.proxNoiseSource) { try { this.proxNoiseSource.stop(); } catch {} this.proxNoiseSource = null; }
     this.stopAmbience();
-    this.currentAmbienceFloor = -1;
     // Zero out master gain to kill any lingering scheduled notes / tails
     if (this.masterGain) this.masterGain.gain.value = 0;
   }

@@ -32,7 +32,7 @@ const soundConfig: SoundConfig = {
   enemyLoop: { file: 'enemy-chains.mp3', volume: 0.3 },
 
   floorAmbience: [
-    { file: 'ambient-basement.mp3', volume: 0.25, sources: 8 },  // Floor 0 — Basement
+    { file: 'ambient-basement.mp3', volume: 0.75, sources: 8 },  // Floor 0 — Basement
     { file: 'ambient-house.mp3', volume: 0.25, sources: 8 },     // Floor 1 — House
     { file: 'ambient-village.mp3', volume: 0.25, sources: 8 },   // Floor 2 — Village
   ],
