@@ -304,21 +304,25 @@ export class Enemy {
     const effectiveSight = flashlightOn ? SIGHT_RANGE : darkRange;
     const canSee = this.hasLineOfSight(playerPos) && distToPlayer < effectiveSight;
 
-    // Hearing: in the dark, noise also triggers investigation even without LOS
+    // Hearing: split into close (triggers chase) and far (investigate only)
+    const HEAR_CHASE_RANGE = 5;  // within 5 units — close enough to trigger chase
     const canHear = !flashlightOn && playerNoise > 0.1 && distToPlayer < darkRange;
+    const canHearClose = canHear && distToPlayer < HEAR_CHASE_RANGE;
+    const canHearFar = canHear && !canHearClose;
 
     // ── FSM ──────────────────────────────────────────────────────────────
     switch (this.state) {
       case EnemyState.SEARCHING:
         this.audio.playChannelState(this.channelId, 'searching');
-        if (canSee) {
+        if (canSee || canHearClose) {
+          // Visual contact or very close sound — chase!
           this.state = EnemyState.SPOTTED;
           this.lastKnownPlayerPos = playerPos.clone();
           this.audio.playChannelState(this.channelId, 'spotted');
           this.alertSiblings(playerPos);
           console.debug(`[Enemy z${this.patrolZone} f${this.floorIndex}] SPOTTED player at dist ${distToPlayer.toFixed(1)}`);
-        } else if (canHear) {
-          // Heard footsteps — investigate toward player position
+        } else if (canHearFar) {
+          // Far sound — investigate toward sound, don't chase
           this.investigateTarget = playerPos.clone();
           this.lastKnownPlayerPos = playerPos.clone();
           this.searchTarget = this.investigateTarget;
@@ -342,7 +346,10 @@ export class Enemy {
 
       case EnemyState.CHASING:
         this.audio.playChannelState(this.channelId, 'chasing');
-        if (canSee || canHear) {
+        if (canSee || canHearClose) {
+          this.lastKnownPlayerPos = playerPos.clone();
+        } else if (canHearFar) {
+          // Far sound while chasing — update last known but don't refresh chase lock
           this.lastKnownPlayerPos = playerPos.clone();
         }
 
