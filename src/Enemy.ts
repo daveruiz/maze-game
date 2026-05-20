@@ -251,6 +251,7 @@ export class Enemy {
       return false;
     }
     this.mesh.visible = true;
+    this.audio.startChannelChains(this.channelId);
 
     const speedMult = 1 + this.floorIndex * SPEED_SCALE_PER_FLOOR;
 

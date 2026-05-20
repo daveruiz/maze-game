@@ -52,18 +52,21 @@ container.addEventListener('click', (e) => {
   }
 });
 
-// Gamepad: poll for A button press to click start/restart when overlay is visible
-let gpPrevA = false;
+// Gamepad: poll for A or Start button press to click start/restart when overlay is visible
+let gpPrevConfirm = false;
 function pollGamepadForMenu() {
   requestAnimationFrame(pollGamepadForMenu);
-  if (overlay.style.display === 'none') { gpPrevA = false; return; }
+  // Overlay is visible when display is '' (initial) or 'flex' (retry); 'none' = in-game
+  if (overlay.style.display === 'none') { gpPrevConfirm = false; return; }
 
   const gamepads = navigator.getGamepads?.() ?? [];
-  let a = false;
+  let confirm = false;
   for (const gp of gamepads) {
-    if (gp?.connected && gp.buttons[0]?.pressed) { a = true; break; }
+    if (!gp?.connected) continue;
+    // A button (index 0) or Start/Options button (index 9)
+    if (gp.buttons[0]?.pressed || gp.buttons[9]?.pressed) { confirm = true; break; }
   }
-  if (a && !gpPrevA) startBtn.click();
-  gpPrevA = a;
+  if (confirm && !gpPrevConfirm) startBtn.click();
+  gpPrevConfirm = confirm;
 }
 pollGamepadForMenu();

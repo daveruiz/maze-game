@@ -528,6 +528,12 @@ export class AudioManager {
     this.channels.get(id)?.stop();
   }
 
+  /** Ensure the chains loop is running for a channel (restarts if killed while off-floor). */
+  startChannelChains(id: number) {
+    if (!this.shared.chainsBuf || !soundConfig.enemyLoop) return;
+    this.channels.get(id)?.startChainsLoop(this.shared.chainsBuf, soundConfig.enemyLoop.volume);
+  }
+
   /** Stop all enemy channels */
   stopEnemySound() {
     for (const ch of this.channels.values()) ch.stop();
