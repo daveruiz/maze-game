@@ -619,6 +619,9 @@ export class Game {
     // Capture current camera rotation as starting point
     this.deathYaw = this.camera.rotation.y;
     this.deathPitch = this.camera.rotation.x;
+    // Reset crouch so death camera isn't low — also snap camera Y back up
+    this.player.resetCrouch();
+    this.camera.position.copy(this.player.getPosition());
     // Force flashlight on so the monster is visible
     this.flashlightOn = true;
     this.flashlight.intensity = 28.0;

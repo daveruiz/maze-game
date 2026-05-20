@@ -298,7 +298,7 @@ export class Enemy {
     // Walking in the dark (noise ~0.3) = ~7 units
     // Sprinting in the dark (noise ~0.7) = ~18 units
     // Landing (noise ~1.0) = ~25 units
-    const DARK_MIN_RANGE = 1;    // crouching / silent — nearly invisible
+    const DARK_MIN_RANGE = 0.3;  // crouching / silent — nearly invisible
     const DARK_MAX_RANGE = 19;   // loud noise (landing)
     const darkRange = DARK_MIN_RANGE + playerNoise * (DARK_MAX_RANGE - DARK_MIN_RANGE);
     const effectiveSight = flashlightOn ? SIGHT_RANGE : darkRange;

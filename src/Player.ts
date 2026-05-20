@@ -5,7 +5,6 @@ const BASE_SPEED    = 3.75;   // halved from 7.5
 const SPRINT_MULT   = 2.0;    // shift doubles speed (back to original 7.5)
 const EXHAUSTED_MULT = 0.5;   // half speed when stamina depleted
 const CROUCH_MULT   = 0.4;   // slow when crouching
-const CROUCH_ON_OBSTACLE_MULT = 0.0; // can't move when crouching on obstacle
 const PLAYER_HEIGHT = 1.6;
 const CROUCH_HEIGHT = 0.7;   // camera height when crouching (bigger drop)
 const PLAYER_RADIUS = 0.65;
@@ -149,6 +148,12 @@ export class Player {
   requestLock() { document.body.requestPointerLock(); }
   isLocked()    { return this.locked; }
 
+  /** Reset crouch state (call on death) */
+  resetCrouch() {
+    this.crouching = false;
+    this.currentCrouchDip = 0;
+  }
+
   /** Mobile: set a virtual key state */
   setKey(code: string, pressed: boolean) { this.keys[code] = pressed; }
 
@@ -195,13 +200,8 @@ export class Player {
     }
 
     // ── Speed multiplier ────────────────────────────────────────────────
-    // Check if standing on an obstacle (for crouch-on-obstacle lock)
-    const curCell = this.maze.worldToCell(this.pos.x, this.pos.z, this.floorIndex);
-    const onObstacle = !!this.maze.floors[this.floorIndex]?.cells[curCell.z]?.[curCell.x]?.hasObstacle;
-
     let speedMult = 1.0;
-    if (this.crouching && onObstacle) speedMult = CROUCH_ON_OBSTACLE_MULT;
-    else if (this.crouching) speedMult = CROUCH_MULT;
+    if (this.crouching) speedMult = CROUCH_MULT;
     else if (this.exhausted) speedMult = EXHAUSTED_MULT;
     else if (this.sprinting) speedMult = SPRINT_MULT;
 
