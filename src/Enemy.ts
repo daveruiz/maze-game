@@ -897,8 +897,16 @@ export class Enemy {
   }
 
   private doChase(dt: number, playerPos: THREE.Vector3, speedMult: number) {
-    // Always use BFS pathfinding — beeline can get stuck on wall corners
     const target = this.lastKnownPlayerPos ?? playerPos;
+    const distToTarget = this.pos.distanceTo(target);
+
+    // Close range: move directly toward the player (BFS can't resolve sub-cell distances)
+    if (distToTarget < CELL_SIZE * 1.2) {
+      this.moveToward(target, BASE_CHASE_SPEED * speedMult * dt);
+      return;
+    }
+
+    // Far range: use BFS pathfinding to avoid wall corners
     if (this.pathTimer >= PATH_UPDATE_INTERVAL * 0.5 || this.path.length === 0) {
       this.pathTimer = 0;
       this.path = this.smoothPath(this.bfsPath(this.pos, target, true));
