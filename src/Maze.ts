@@ -793,6 +793,8 @@ export class MazeRenderer {
   private stairMeshes: THREE.Mesh[] = [];
   /** Lights belonging to each floor (for culling) */
   floorLights: THREE.Light[][] = [];
+  /** Lantern world positions per floor (x, y, z) — no PointLights, just positions */
+  lanternPositions: { x: number; y: number; z: number }[][] = [];
 
   build(maze: MazeGenerator, scene: THREE.Scene): void {
     maze.floors.forEach((floor, fi) => {
@@ -1004,9 +1006,11 @@ export class MazeRenderer {
     group.add(stairGroup);
   }
 
-  private addStreetLanterns(group: THREE.Group, floor: MazeFloor, _fi: number, yBase: number, _wH: number) {
+  private addStreetLanterns(group: THREE.Group, floor: MazeFloor, fi: number, yBase: number, _wH: number) {
     const W = floor.width, H = floor.height;
     const LANTERN_STEP = Math.max(7, Math.floor(Math.max(W, H) / 20));
+    const positions: { x: number; y: number; z: number }[] = [];
+
     for (let z = 0; z < H; z += LANTERN_STEP) {
       for (let x = 0; x < W; x += LANTERN_STEP) {
         const c = floor.cells[z]?.[x];
@@ -1033,12 +1037,11 @@ export class MazeRenderer {
         head.position.set(lx, yBase + WALL_HEIGHT * 0.82, lz);
         group.add(head);
 
-        // Point light — warm glow that illuminates surrounding streets
-        const light = new THREE.PointLight(0xbfa687, 45.0, 18, 1.5);
-        light.position.set(lx, yBase + WALL_HEIGHT * 0.78, lz);
-        group.add(light);
+        // Store position for the light pool (no PointLight created here)
+        positions.push({ x: lx, y: yBase + WALL_HEIGHT * 0.78, z: lz });
       }
     }
+    this.lanternPositions[fi] = positions;
   }
 
   private makeWall(mat: THREE.Material, w: number, h: number, d: number, wx = 0, wy = 0, wz = 0): THREE.Mesh {

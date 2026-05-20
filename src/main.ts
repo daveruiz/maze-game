@@ -36,11 +36,16 @@ startBtn.addEventListener('click', () => {
     game = new Game(container);
     game.start();
   }
+
+  // Lock pointer immediately on start/restart (mouse mode only)
+  if (!inputMode.isTouch) document.body.requestPointerLock();
 });
 
 // Mouse mode: click on canvas re-acquires pointer lock (but not on UI elements)
 container.addEventListener('click', (e) => {
   if (game && !inputMode.isTouch && !document.pointerLockElement) {
+    // Don't re-lock if overlay is visible (retry/start screen) or clicking UI
+    if (overlay.style.display !== 'none') return;
     const target = e.target as HTMLElement;
     if (target.closest('#debug-menu') || target.closest('#hud') || target.closest('.mobile-btn')) return;
     document.body.requestPointerLock();

@@ -53,8 +53,10 @@ export class Game {
   /** Per-floor lights (for culling) */
   private floorLights: THREE.Light[][] = [];
   private globalLights: THREE.Light[] = [];  // lights that are always visible
-  /** All positional lights for distance culling */
-  private positionalLights: THREE.PointLight[] = [];
+  /** Fixed pool of lantern lights repositioned each frame to nearest lanterns */
+  private lanternPool: THREE.PointLight[] = [];
+  private readonly LANTERN_POOL_SIZE = 8;
+  private readonly LANTERN_PARK_Y = -1000;
 
   // Death animation
   private dying = false;
@@ -93,8 +95,8 @@ export class Game {
 
   constructor(container: HTMLElement) {
     this.renderer = new THREE.WebGLRenderer({ antialias: false });
-    // Default: native resolution capped at 2× DPR; debug menu can lower it
-    this.renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+    // Default 4× downscale for performance; debug menu can adjust
+    this.renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2) / 4);
     this.renderer.setSize(window.innerWidth, window.innerHeight);
     this.renderer.shadowMap.enabled = true;
     container.appendChild(this.renderer.domElement);
@@ -337,11 +339,15 @@ export class Game {
     // Pass floor lights to maze renderer too
     this.mazeRenderer.floorLights = this.floorLights;
 
-    // Collect all positional lights for distance culling
-    this.positionalLights = [];
-    this.scene.traverse(obj => {
-      if (obj instanceof THREE.PointLight) this.positionalLights.push(obj);
-    });
+    // Create a fixed pool of lantern lights (reused each frame for nearest lanterns)
+    this.lanternPool = [];
+    for (let i = 0; i < this.LANTERN_POOL_SIZE; i++) {
+      const light = new THREE.PointLight(0xbfa687, 45.0, 18, 1.5);
+      light.position.set(0, this.LANTERN_PARK_Y, 0);
+      this.scene.add(light);
+      this.lanternPool.push(light);
+      this.lights.push(light);
+    }
 
     this.updateFog(0);
   }
@@ -349,7 +355,7 @@ export class Game {
   private updateFog(floorIdx: number) {
     const theme = this.maze.floors[floorIdx].theme;
     this.scene.fog = new THREE.FogExp2(theme.fogColor, theme.fogDensity);
-    this.renderer.setClearColor(theme.hasCeiling ? theme.fogColor : 0x01020a);
+    this.renderer.setClearColor(theme.fogColor);
 
     // Scale global ambient per floor — floors 2/3 have brighter materials so need less fill
     const ambientScale = floorIdx === 0 ? 7.0 : 3.0;
@@ -483,15 +489,26 @@ export class Game {
     // Floor culling — only render the active floor
     this.setVisibleFloor(this.player.floorIndex);
 
-    // Distance-cull positional lights beyond fog range; skip all when fullbright is on
-    if (this.debugLight) {
-      for (const light of this.positionalLights) light.visible = false;
+    // Lantern light pool: reposition pool lights to the nearest lantern positions
+    const lanterns = this.mazeRenderer.lanternPositions[fi] ?? [];
+    if (this.debugLight || lanterns.length === 0) {
+      for (const pl of this.lanternPool) pl.position.y = this.LANTERN_PARK_Y;
     } else {
-      const LIGHT_CULL_DIST_SQ = 35 * 35;
-      for (const light of this.positionalLights) {
-        const dx = light.position.x - pp.x;
-        const dz = light.position.z - pp.z;
-        light.visible = (dx * dx + dz * dz) < LIGHT_CULL_DIST_SQ;
+      const scored: { idx: number; distSq: number }[] = [];
+      for (let i = 0; i < lanterns.length; i++) {
+        const lp = lanterns[i];
+        const dx = lp.x - pp.x, dz = lp.z - pp.z;
+        scored.push({ idx: i, distSq: dx * dx + dz * dz });
+      }
+      scored.sort((a, b) => a.distSq - b.distSq);
+
+      for (let i = 0; i < this.lanternPool.length; i++) {
+        if (i < scored.length) {
+          const lp = lanterns[scored[i].idx];
+          this.lanternPool[i].position.set(lp.x, lp.y, lp.z);
+        } else {
+          this.lanternPool[i].position.y = this.LANTERN_PARK_Y;
+        }
       }
     }
 
@@ -953,8 +970,8 @@ export class Game {
   private setupDebugMenu() {
     const menu = document.getElementById('debug-menu')!;
 
-    // Floor jump buttons
-    menu.querySelectorAll<HTMLButtonElement>('.floor-btns button').forEach(btn => {
+    // Floor jump buttons (only buttons with data-floor, not pixel scale buttons)
+    menu.querySelectorAll<HTMLButtonElement>('button[data-floor]').forEach(btn => {
       btn.addEventListener('click', () => {
         const fi = parseInt(btn.dataset.floor ?? '0', 10);
         this.debugJumpToFloor(fi);
@@ -1025,7 +1042,7 @@ export class Game {
   private updateDebugFloorButtons() {
     const menu = document.getElementById('debug-menu')!;
     const fi = this.player?.floorIndex ?? 0;
-    menu.querySelectorAll<HTMLButtonElement>('.floor-btns button').forEach(btn => {
+    menu.querySelectorAll<HTMLButtonElement>('button[data-floor]').forEach(btn => {
       const bfi = parseInt(btn.dataset.floor ?? '-1', 10);
       btn.classList.toggle('active', bfi === fi);
     });

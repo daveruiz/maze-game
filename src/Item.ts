@@ -66,11 +66,13 @@ export class Item {
   update(t: number, playerPos: THREE.Vector3, playerFloor: number, camera: THREE.Camera): boolean {
     if (this.collected) return false;
 
-    // Hide if not on the same floor
+    // Hide if not on the same floor (park light instead of toggling visible)
     const visible = this.floorIndex === playerFloor;
     this.mesh.visible = visible;
-    this.glow.visible = visible;
-    if (!visible) return false;
+    if (!visible) {
+      this.glow.position.y = -1000;
+      return false;
+    }
 
     // Float (no rotation — billboard toward camera)
     this.mesh.position.y = this.baseY + Math.sin(t * FLOAT_SPEED) * FLOAT_AMP;
@@ -92,7 +94,8 @@ export class Item {
   private collect() {
     this.collected = true;
     this.mesh.visible = false;
-    this.glow.visible = false;
+    // Park the light far away instead of toggling visible (avoids shader recompilation)
+    this.glow.position.y = -1000;
   }
 
   dispose(scene: THREE.Scene) {

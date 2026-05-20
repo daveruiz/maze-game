@@ -986,8 +986,9 @@ export class AudioManager {
     for (let i = 0; i < data.length; i++) {
       const t = i / sr;
       const env = Math.max(0, 1 - t / dur);
-      data[i] = (Math.sin(2 * Math.PI * freq * t) * 0.3
-              + (Math.random() - 0.5) * 0.4) * env * env;
+      // Mostly percussive noise with a subtle tonal hint
+      data[i] = (Math.sin(2 * Math.PI * freq * t) * 0.05
+              + (Math.random() - 0.5) * 0.6) * env * env;
     }
     const src = this.ctx.createBufferSource();
     src.buffer = buf;
