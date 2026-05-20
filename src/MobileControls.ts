@@ -120,7 +120,7 @@ export class MobileControls {
     this.joyVecY = 0;
     this.joystickTouchId = null;
     this.lookTouchId = null;
-    for (const k of ['KeyW','KeyS','KeyA','KeyD','ShiftLeft']) {
+    for (const k of ['KeyW','KeyS','KeyA','KeyD','ShiftLeft','KeyC']) {
       this.player.setKey(k, false);
     }
   }
@@ -182,7 +182,9 @@ export class MobileControls {
       }
       /* Top button (jump): vertically centered, closer to edge */
       #btn-mobile-jump       { top: calc(50% - ${BTN_SIZE + 10}px); right: 20px; }
-      /* Bottom button (flashlight): just below center, inset for thumb arc */
+      /* Bottom-right button (crouch): just below center, near edge */
+      #btn-mobile-crouch     { top: calc(50% + 10px);              right: 20px; }
+      /* Bottom-left button (flashlight): just below center, inset for thumb arc */
       #btn-mobile-flashlight { top: calc(50% + 10px);              right: 86px; }
       .mobile-btn {
         width: ${BTN_SIZE}px; height: ${BTN_SIZE}px;
@@ -373,8 +375,9 @@ export class MobileControls {
     const btnContainer = document.createElement('div');
     btnContainer.id = 'mobile-buttons';
 
-    const btnFlash = this.makeButton('🔦', 'Light', 'btn-mobile-flashlight');
-    const btnJump  = this.makeButton('⬆', 'Jump', 'btn-mobile-jump');
+    const btnFlash  = this.makeButton('🔦', 'Light', 'btn-mobile-flashlight');
+    const btnJump   = this.makeButton('⬆', 'Jump', 'btn-mobile-jump');
+    const btnCrouch = this.makeButton('⬇', 'Crouch', 'btn-mobile-crouch');
 
     // Flashlight tap
     btnFlash.addEventListener('touchstart', (e) => {
@@ -390,8 +393,26 @@ export class MobileControls {
       this.player.triggerJump();
     }, { passive: false });
 
+    // Crouch hold — press and hold to crouch, release to stand
+    const crouchStart = (e: Event) => {
+      e.preventDefault();
+      e.stopPropagation();
+      this.player.setKey('KeyC', true);
+      btnCrouch.classList.add('active');
+    };
+    const crouchEnd = (e: Event) => {
+      e.preventDefault();
+      e.stopPropagation();
+      this.player.setKey('KeyC', false);
+      btnCrouch.classList.remove('active');
+    };
+    btnCrouch.addEventListener('touchstart', crouchStart, { passive: false });
+    btnCrouch.addEventListener('touchend', crouchEnd, { passive: false });
+    btnCrouch.addEventListener('touchcancel', crouchEnd, { passive: false });
+
     btnContainer.appendChild(btnFlash);
     btnContainer.appendChild(btnJump);
+    btnContainer.appendChild(btnCrouch);
     this.container.appendChild(btnContainer);
 
     document.body.appendChild(this.container);

@@ -7,6 +7,7 @@ const AXIS_RX = 2;
 const AXIS_RY = 3;
 
 const BTN_A     = 0;   // Jump (Cross / A)
+const BTN_B     = 1;   // Crouch (Circle / B) — held
 const BTN_X     = 2;   // Flashlight (Square / X)
 const BTN_L3    = 10;  // Left stick press — sprint toggle
 
@@ -41,7 +42,7 @@ export class GamepadManager {
 
     // Accumulate input from all connected gamepads
     let lx = 0, ly = 0, rx = 0, ry = 0;
-    let l3 = false, a = false, x = false;
+    let l3 = false, a = false, b = false, x = false;
     let anyConnected = false;
 
     for (const gp of gamepads) {
@@ -62,6 +63,7 @@ export class GamepadManager {
       // OR buttons across all gamepads
       l3 = l3 || (gp.buttons[BTN_L3]?.pressed ?? false);
       a  = a  || (gp.buttons[BTN_A]?.pressed ?? false);
+      b  = b  || (gp.buttons[BTN_B]?.pressed ?? false);
       x  = x  || (gp.buttons[BTN_X]?.pressed ?? false);
     }
 
@@ -76,7 +78,7 @@ export class GamepadManager {
     const ACTIVATE_THRESHOLD = 0.4;
     const hasInput = Math.abs(lx) > ACTIVATE_THRESHOLD || Math.abs(ly) > ACTIVATE_THRESHOLD
                   || Math.abs(rx) > ACTIVATE_THRESHOLD || Math.abs(ry) > ACTIVATE_THRESHOLD
-                  || l3 || a || x;
+                  || l3 || a || b || x;
 
     // Activate on first real input, deactivate when keyboard takes over
     // (keyboard deactivation is handled by the keydown listener below)
@@ -112,6 +114,9 @@ export class GamepadManager {
 
     this.player.setKey('ShiftLeft', this.sprintLatched && moving);
 
+    // ── B button → crouch (held) ───────────────────────────────────────
+    this.player.setKey('KeyC', b);
+
     // ── Right stick → look ─────────────────────────────────────────────
     if (Math.abs(rx) > 0.01 || Math.abs(ry) > 0.01) {
       const dx = Math.max(-MAX_LOOK_DELTA, Math.min(MAX_LOOK_DELTA, rx * LOOK_SENSITIVITY));
@@ -134,7 +139,7 @@ export class GamepadManager {
     this.active = false;
     this.sprintLatched = false;
     if (this.player) {
-      for (const k of ['KeyW', 'KeyS', 'KeyA', 'KeyD', 'ShiftLeft']) {
+      for (const k of ['KeyW', 'KeyS', 'KeyA', 'KeyD', 'ShiftLeft', 'KeyC']) {
         this.player.setKey(k, false);
       }
     }
