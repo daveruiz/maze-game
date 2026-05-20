@@ -20,6 +20,10 @@ inputMode.onChange((mode) => {
   if (mode === 'touch' && document.pointerLockElement) {
     document.exitPointerLock();
   }
+  // Deactivate gamepad when switching to touch (same as keyboard reclaim)
+  if (mode === 'touch' && game) {
+    game.deactivateGamepad();
+  }
 });
 
 startBtn.addEventListener('click', () => {
@@ -34,9 +38,11 @@ startBtn.addEventListener('click', () => {
   }
 });
 
-// Mouse mode: click on canvas re-acquires pointer lock
-container.addEventListener('click', () => {
+// Mouse mode: click on canvas re-acquires pointer lock (but not on UI elements)
+container.addEventListener('click', (e) => {
   if (game && !inputMode.isTouch && !document.pointerLockElement) {
+    const target = e.target as HTMLElement;
+    if (target.closest('#debug-menu') || target.closest('#hud') || target.closest('.mobile-btn')) return;
     document.body.requestPointerLock();
   }
 });

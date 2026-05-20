@@ -230,12 +230,16 @@ export class Enemy {
     if (this.state === EnemyState.CHASING) return; // already chasing, ignore
     this.state = EnemyState.SEARCHING;
     this.lastKnownPlayerPos = targetPos.clone();
-    // Pick an investigation point offset from the alert position
-    // so multiple alerted enemies converge from different angles
-    this.investigateTimer = INVESTIGATE_DURATION;
-    this.investigateTarget = this.pickInvestigatePoint(targetPos);
+    // Go to alert position first, then investigate nearby
+    this.reachedLastKnown = false;
+    this.investigateTarget = targetPos.clone();
+    this.searchTarget = this.investigateTarget;
     this.path = this.smoothPath(this.bfsPath(this.pos, this.investigateTarget, true));
-    this.searchTimer = INVESTIGATE_DURATION + 1; // don't override with random search
+    const walkDist = this.pathWalkDistance(this.path);
+    const speedMult = 1 + this.floorIndex * SPEED_SCALE_PER_FLOOR;
+    const travelTime = walkDist / (BASE_CHASE_SPEED * 0.7 * speedMult);
+    this.investigateTimer = travelTime + INVESTIGATE_DURATION;
+    this.searchTimer = this.investigateTimer + 1; // don't override with random search
   }
 
   update(dt: number, playerPos: THREE.Vector3, playerFloor: number, camera: THREE.Camera, flashlightOn = true): boolean {
@@ -324,15 +328,19 @@ export class Enemy {
         const effectiveLoseRange = flashlightOn ? LOSE_RANGE : LOSE_RANGE_DARK;
         if (!canSee && distToPlayer > effectiveLoseRange) {
           console.debug(`[Enemy z${this.patrolZone} f${this.floorIndex}] LOST player at dist ${distToPlayer.toFixed(1)}`);
-          // Lost the player — validate position (chase beeline may have pushed into walls)
-          this.snapToNearestReachable();
-          // Start investigating the area
+          // Lost the player — go to last known position, then investigate the area
           this.state = EnemyState.SEARCHING;
-          this.investigateTimer = INVESTIGATE_DURATION;
-          this.investigateTarget = this.pickInvestigatePoint(
-            this.lastKnownPlayerPos ?? playerPos
-          );
+          this.reachedLastKnown = false;
+          this.investigateTarget = (this.lastKnownPlayerPos ?? playerPos).clone();
+          this.searchTarget = this.investigateTarget;
           this.path = this.smoothPath(this.bfsPath(this.pos, this.investigateTarget, true));
+          // Timer = travel time + investigation time, so it never expires mid-walk
+          const walkDist = this.pathWalkDistance(this.path);
+          const travelTime = walkDist / (BASE_CHASE_SPEED * 0.7 * speedMult);
+          this.investigateTimer = travelTime + INVESTIGATE_DURATION;
+          // Reset stuck timer so it doesn't immediately snap us away
+          this.stuckCheckTimer = 0;
+          this.stuckCheckPos.copy(this.pos);
           break;
         }
 
@@ -567,16 +575,27 @@ export class Enemy {
   }
 
   /** Investigation movement: go to investigation target, then wander nearby */
+  private reachedLastKnown = false;
+
   private doInvestigate(dt: number, speedMult: number) {
     if (!this.investigateTarget) {
       this.investigateTimer = 0;
       return;
     }
 
-    // If we've reached the investigate target, pick a new nearby one
-    if (this.path.length === 0 || this.pos.distanceTo(this.investigateTarget) < 1.0) {
-      if (this.lastKnownPlayerPos) {
+    // Reached current target or path exhausted — pick next step
+    if (this.path.length === 0 || this.pos.distanceTo(this.investigateTarget) < 1.5) {
+      if (!this.reachedLastKnown && this.lastKnownPlayerPos) {
+        // First: go to last known player position
+        this.reachedLastKnown = true;
+        // Now search the area around it
         this.investigateTarget = this.pickInvestigatePoint(this.lastKnownPlayerPos);
+        this.searchTarget = this.investigateTarget;
+        this.path = this.smoothPath(this.bfsPath(this.pos, this.investigateTarget, true));
+      } else if (this.lastKnownPlayerPos) {
+        // Already reached last known — wander nearby
+        this.investigateTarget = this.pickInvestigatePoint(this.lastKnownPlayerPos);
+        this.searchTarget = this.investigateTarget;
         this.path = this.smoothPath(this.bfsPath(this.pos, this.investigateTarget, true));
       } else {
         this.investigateTimer = 0;
@@ -681,14 +700,15 @@ export class Enemy {
       // Pick a cell in the player's AREA, not the exact cell
       const target = this.pickHuntTarget();
       this.searchTarget = target;
-      this.path = this.smoothPath(this.bfsPath(this.pos, target, true));
+      // Path WITHOUT ignoring obstacles — enemy can't walk through them
+      this.path = this.smoothPath(this.bfsPath(this.pos, target));
       this.huntTrackTimer = 5 + Math.random() * 4; // 5–9s between re-targets
 
       if (this.path.length === 0) {
         this.huntFailCount++;
         if (this.huntFailCount >= 2) {
           this.snapToNearestReachable();
-          this.path = this.smoothPath(this.bfsPath(this.pos, target, true));
+          this.path = this.smoothPath(this.bfsPath(this.pos, target));
           if (this.path.length === 0) {
             this.searchTarget = this.pickPatrolTarget();
             this.path = this.smoothPath(this.bfsPath(this.pos, this.searchTarget));
@@ -716,20 +736,28 @@ export class Enemy {
     }
   }
 
-  /** Pick a hunt target: a reachable cell within ~3-8 cells of the player's position.
-   *  This makes enemies converge on the player's area without beelining to the exact spot. */
+  /** Pick a hunt target: a reachable cell within the player's area.
+   *  Sweet-spot range scales with map size so it works on all floors.
+   *  Only considers cells the enemy can actually walk to (no obstacles). */
   private pickHuntTarget(): THREE.Vector3 {
     const playerCell = this.maze.worldToCell(this.playerHint.x, this.playerHint.z, this.floorIndex);
+    // Distance map from player ignores obstacles (player can be on one)
     const playerDistMap = this.bfsDistanceMap(playerCell.x, playerCell.z, true);
     const cells = this.reachableCells.filter(c => !c.hasObstacle);
     if (cells.length === 0) return this.playerHint.clone();
 
-    const HUNT_MIN = 3;  // don't pick cells right on top of the player
-    const HUNT_MAX = 8;  // don't pick cells too far from the player
+    // Scale hunt range with map size — maze BFS distances grow super-linearly
+    // because paths wind around walls. Use scale² for max to cover enough area.
+    const floor = this.maze.floors[this.floorIndex];
+    const mapDim = Math.min(floor.width, floor.height);
+    const scale = mapDim / 21;
+    const HUNT_MIN = Math.max(3, Math.round(3 * scale));
+    const HUNT_MAX = Math.max(8, Math.round(8 * scale * scale));
+    const HUNT_PEAK = Math.round((HUNT_MIN + HUNT_MAX) / 2);
 
     let bestScore = -Infinity;
     let bestCell = cells[0];
-    const sampleSize = Math.min(cells.length, 120);
+    const sampleSize = Math.min(cells.length, 200);
     const step = Math.max(1, Math.floor(cells.length / sampleSize));
 
     for (let i = 0; i < cells.length; i += step) {
@@ -737,23 +765,36 @@ export class Enemy {
       const key = `${c.x},${c.z}`;
       const bfsToPlayer = playerDistMap.get(key) ?? 999;
 
-      // Sweet spot: 3-8 BFS steps from player
+      // Skip cells the distance map couldn't reach (unreachable from player)
+      if (bfsToPlayer >= 999) continue;
+
+      // Sweet spot: HUNT_MIN–HUNT_MAX BFS steps from player
       let score = 0;
       if (bfsToPlayer >= HUNT_MIN && bfsToPlayer <= HUNT_MAX) {
-        score += 50 - Math.abs(bfsToPlayer - 5) * 3; // peak at 5 cells away
+        score += 50 - Math.abs(bfsToPlayer - HUNT_PEAK) * (30 / (HUNT_MAX - HUNT_MIN));
       } else if (bfsToPlayer < HUNT_MIN) {
-        score += 20 - (HUNT_MIN - bfsToPlayer) * 8;  // mild penalty for too close
+        score += 20 - (HUNT_MIN - bfsToPlayer) * 8;
       } else {
-        score += Math.max(0, 40 - (bfsToPlayer - HUNT_MAX) * 5); // drops off past HUNT_MAX
+        score += Math.max(0, 40 - (bfsToPlayer - HUNT_MAX) * 3);
       }
 
-      // Separation from siblings
+      // Separation from sibling positions AND their active targets
       for (const sib of this.siblings) {
         if (sib === this || sib.homeFloor !== this.homeFloor) continue;
+        // Penalize near sibling position
         const sibCell = this.maze.worldToCell(sib.pos.x, sib.pos.z, this.floorIndex);
         const sdist = Math.sqrt((c.x - sibCell.x) ** 2 + (c.z - sibCell.z) ** 2);
         if (sdist < SEPARATION_RADIUS / CELL_SIZE) {
           score -= (SEPARATION_RADIUS / CELL_SIZE - sdist) * 2;
+        }
+        // Penalize near sibling's target — avoid converging on the same area
+        const sibTarget = sib.getSearchTarget();
+        if (sibTarget) {
+          const stc = this.maze.worldToCell(sibTarget.x, sibTarget.z, this.floorIndex);
+          const tdist = Math.sqrt((c.x - stc.x) ** 2 + (c.z - stc.z) ** 2);
+          if (tdist < SEPARATION_RADIUS / CELL_SIZE) {
+            score -= (SEPARATION_RADIUS / CELL_SIZE - tdist) * 3;
+          }
         }
       }
 
@@ -776,6 +817,7 @@ export class Enemy {
     const cells = this.reachableCells.filter(c => !c.hasObstacle);
     const floor = this.maze.floors[this.floorIndex];
     if (!floor || cells.length === 0) return this.pos.clone();
+    const mapDim = Math.min(floor.width, floor.height);
 
     const myCell = this.maze.worldToCell(this.pos.x, this.pos.z, this.floorIndex);
 
@@ -799,8 +841,10 @@ export class Enemy {
       const key = `${c.x},${c.z}`;
       const bfsDist = distMap.get(key) ?? 0;
 
-      // Maximize real travel distance from current position
-      let score = Math.min(bfsDist, 60) * 1.5;
+      // Moderate travel distance from current position — not too close, not maximum
+      // Capping prevents always boomeranging to the farthest point (e.g. entry on first pick)
+      const maxDesired = Math.max(15, Math.round(mapDim * 0.6));
+      let score = Math.min(bfsDist, maxDesired) * 1.0 - Math.max(0, bfsDist - maxDesired) * 0.5;
 
       // Also far from last target (ensures diversity across picks)
       if (lastDistMap) {
@@ -808,15 +852,31 @@ export class Enemy {
         score += Math.min(lastDist, 40) * 0.8;
       }
 
-      // Penalize cells near other enemies (separation)
+      // Penalize cells near the entry point — avoid converging on player spawn
+      const entryDist = Math.abs(c.x - floor.entryCell.x) + Math.abs(c.z - floor.entryCell.z);
+      if (entryDist < 6) {
+        score -= (6 - entryDist) * 5;
+      }
+
+      // Penalize cells near other enemies AND their active targets
       for (const sib of this.siblings) {
         if (sib === this || sib.homeFloor !== this.homeFloor) continue;
+        // Penalize near sibling position
         const sibCell = this.maze.worldToCell(sib.pos.x, sib.pos.z, this.floorIndex);
         const sdx = c.x - sibCell.x;
         const sdz = c.z - sibCell.z;
         const sibDist = Math.sqrt(sdx * sdx + sdz * sdz);
         if (sibDist < SEPARATION_RADIUS / CELL_SIZE) {
           score -= (SEPARATION_RADIUS / CELL_SIZE - sibDist) * 2;
+        }
+        // Penalize near sibling's target — avoid converging on the same area
+        const sibTarget = sib.getSearchTarget();
+        if (sibTarget) {
+          const stc = this.maze.worldToCell(sibTarget.x, sibTarget.z, this.floorIndex);
+          const tdist = Math.sqrt((c.x - stc.x) ** 2 + (c.z - stc.z) ** 2);
+          if (tdist < SEPARATION_RADIUS / CELL_SIZE) {
+            score -= (SEPARATION_RADIUS / CELL_SIZE - tdist) * 3;
+          }
         }
       }
 
@@ -836,26 +896,17 @@ export class Enemy {
   }
 
   private doChase(dt: number, playerPos: THREE.Vector3, speedMult: number) {
-    const canSeePlayer = this.hasLineOfSight(playerPos);
+    // Always use BFS pathfinding — beeline can get stuck on wall corners
+    const target = this.lastKnownPlayerPos ?? playerPos;
+    if (this.pathTimer >= PATH_UPDATE_INTERVAL * 0.5 || this.path.length === 0) {
+      this.pathTimer = 0;
+      this.path = this.smoothPath(this.bfsPath(this.pos, target, true));
+    }
 
-    if (canSeePlayer) {
-      // Direct diagonal beeline toward the player — no grid restriction
-      const target = playerPos.clone();
-      target.y = this.pos.y;
-      this.moveToward(target, BASE_CHASE_SPEED * speedMult * dt);
-      this.path = [];
-    } else {
-      // No line of sight — fall back to BFS grid pathfinding
-      if (this.pathTimer >= PATH_UPDATE_INTERVAL || this.path.length === 0) {
-        this.pathTimer = 0;
-        this.path = this.smoothPath(this.bfsPath(this.pos, this.lastKnownPlayerPos ?? playerPos, true));
-      }
-
-      if (this.path.length > 0) {
-        const next = this.path[0];
-        const d = this.moveToward(next, BASE_CHASE_SPEED * speedMult * dt);
-        if (d < 0.4) this.path.shift();
-      }
+    if (this.path.length > 0) {
+      const next = this.path[0];
+      const d = this.moveToward(next, BASE_CHASE_SPEED * speedMult * dt);
+      if (d < 0.4) this.path.shift();
     }
   }
 
@@ -949,7 +1000,8 @@ export class Enemy {
    *  @param ignoreObstacles  true when targeting the player — obstacles are low
    *    blocks the enemy can physically walk over (enforceWalls only checks walls).
    *    false for patrol targets — keeps enemies on clean walkable cells. */
-  private bfsPath(from: THREE.Vector3, to: THREE.Vector3, ignoreObstacles = false): THREE.Vector3[] {
+  /** BFS pathfind. Obstacles ignored by default — enemies walk through them. */
+  private bfsPath(from: THREE.Vector3, to: THREE.Vector3, ignoreObstacles = true): THREE.Vector3[] {
     const fi = this.floorIndex;
     const floor = this.maze.floors[fi];
     if (!floor) return [];
@@ -1013,7 +1065,8 @@ export class Enemy {
   /** BFS distance map from a start cell — returns Map<"x,z", stepCount>.
    *  @param ignoreObstacles  true for smell/vision (obstacles are low, don't block);
    *                          false for movement distance (enemies can't jump obstacles). */
-  private bfsDistanceMap(sx: number, sz: number, ignoreObstacles = false): Map<string, number> {
+  /** BFS distance map. Obstacles ignored by default — enemies walk through them. */
+  private bfsDistanceMap(sx: number, sz: number, ignoreObstacles = true): Map<string, number> {
     const floor = this.maze.floors[this.floorIndex];
     const dist = new Map<string, number>();
     if (!floor) return dist;
@@ -1155,8 +1208,7 @@ export class Enemy {
       const cell = floor.cells[z]?.[x];
       if (!cell) continue;
       if (cell.walls.N && cell.walls.S && cell.walls.E && cell.walls.W) continue;
-      // Skip obstacle cells — enemies can't traverse them (no jumping)
-      if (cell.hasObstacle) continue;
+      // Enemies CAN walk through obstacles (only players jump them)
       result.push(cell);
 
       const tryMove = (nx: number, nz: number) => {
@@ -1189,6 +1241,7 @@ export class Enemy {
   }
 
   getPosition(): THREE.Vector3 { return this.pos; }
+  getSearchTarget(): THREE.Vector3 | null { return this.searchTarget; }
 
   dispose() {
     this.scene.remove(this.mesh);

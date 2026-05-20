@@ -41,8 +41,8 @@ export class Game {
   private flashBattery  = 100;
   private torchLight!:   THREE.PointLight; // very dim ambient torch (replaces flashlight when dead)
   private debugLight    = false;
-  private debugNoEnemy  = false;
   private debugRevealMap = false;
+  private debugFastForward = false;
   private debugAmbient!: THREE.AmbientLight;
   private debugMenuOpen = false;
   private mobileControls: MobileControls | null = null;
@@ -355,7 +355,8 @@ export class Game {
   private loop = () => {
     if (!this.running) return;
     this.raf = requestAnimationFrame(this.loop);
-    const dt = Math.min(this.clock.getDelta(), 0.05);
+    const rawDt = Math.min(this.clock.getDelta(), 0.05);
+    const dt = this.debugFastForward ? rawDt * 3 : rawDt;
     const t  = this.clock.getElapsedTime();
 
     // ── Death animation ──────────────────────────────────────────────────
@@ -393,7 +394,7 @@ export class Game {
 
       // Phase 1 (0–2.5s): FOV narrows 75 → 45
       // Phase 2 (2.5–3.3s): dramatic zoom FOV 45 → 7.5 with ease-in + camera roll
-      const PHASE1_END = 2.5;
+      const PHASE1_END = 1.75;
       const PHASE2_DUR = 0.8;
       const TOTAL_DEATH = PHASE1_END + PHASE2_DUR;
 
@@ -480,22 +481,20 @@ export class Game {
     // Enemies + proximity drone
     let nearestDist = Infinity;
     let caughtBy: Enemy | null = null;
-    if (!this.debugNoEnemy) {
-      for (const enemy of this.enemies) {
-        // Feed player hint + key status to enemies on this floor
-        if (enemy.homeFloor === fi) {
-          enemy.setPlayerHint(pp);
-          enemy.setKeyCollected(hasKey === true);
-        }
-        const caught = enemy.update(dt, pp, this.player.floorIndex, this.camera, this.flashlightOn);
-        if (caught && !caughtBy) {
-          caughtBy = enemy;
-        }
-        // Track nearest enemy on this floor
-        if (enemy.homeFloor === this.player.floorIndex) {
-          const d = enemy.getPosition().distanceTo(pp);
-          if (d < nearestDist) nearestDist = d;
-        }
+    for (const enemy of this.enemies) {
+      // Feed player hint + key status to enemies on this floor
+      if (enemy.homeFloor === fi) {
+        enemy.setPlayerHint(pp);
+        enemy.setKeyCollected(hasKey === true);
+      }
+      const caught = enemy.update(dt, pp, this.player.floorIndex, this.camera, this.flashlightOn);
+      if (caught && !caughtBy) {
+        caughtBy = enemy;
+      }
+      // Track nearest enemy on this floor
+      if (enemy.homeFloor === this.player.floorIndex) {
+        const d = enemy.getPosition().distanceTo(pp);
+        if (d < nearestDist) nearestDist = d;
       }
     }
 
@@ -506,46 +505,42 @@ export class Game {
     // Prune expired pings
     this.soundPings = this.soundPings.filter(p => now - p.time < PING_DURATION);
     // Record pings from enemy sounds
-    if (!this.debugNoEnemy) {
-      for (const enemy of this.enemies) {
-        if (enemy.homeFloor !== this.player.floorIndex) continue;
-        const prevState = this.prevEnemyStates.get(enemy);
-        const curState = enemy.state;
+    for (const enemy of this.enemies) {
+      if (enemy.homeFloor !== this.player.floorIndex) continue;
+      const prevState = this.prevEnemyStates.get(enemy);
+      const curState = enemy.state;
 
-        // State transition = sound event (spotted alert, chase growl, etc.)
-        if (prevState !== undefined && prevState !== curState) {
+      // State transition = sound event (spotted alert, chase growl, etc.)
+      if (prevState !== undefined && prevState !== curState) {
+        const ep = enemy.getPosition();
+        this.soundPings.push({ x: ep.x, z: ep.z, floor: enemy.floorIndex, time: now });
+        this.enemySoundTimers.set(enemy, now);
+      }
+      this.prevEnemyStates.set(enemy, curState);
+
+      // Periodic pings while enemy is actively making noise (searching loop, chasing growls)
+      if (curState === EnemyState.SEARCHING || curState === EnemyState.CHASING) {
+        const lastPing = this.enemySoundTimers.get(enemy) ?? 0;
+        if (now - lastPing >= PING_INTERVAL) {
           const ep = enemy.getPosition();
           this.soundPings.push({ x: ep.x, z: ep.z, floor: enemy.floorIndex, time: now });
           this.enemySoundTimers.set(enemy, now);
-        }
-        this.prevEnemyStates.set(enemy, curState);
-
-        // Periodic pings while enemy is actively making noise (searching loop, chasing growls)
-        if (curState === EnemyState.SEARCHING || curState === EnemyState.CHASING) {
-          const lastPing = this.enemySoundTimers.get(enemy) ?? 0;
-          if (now - lastPing >= PING_INTERVAL) {
-            const ep = enemy.getPosition();
-            this.soundPings.push({ x: ep.x, z: ep.z, floor: enemy.floorIndex, time: now });
-            this.enemySoundTimers.set(enemy, now);
-          }
         }
       }
     }
 
     // Track nearest chasing enemy distance
     let nearestChasingDist = Infinity;
-    if (!this.debugNoEnemy) {
-      for (const enemy of this.enemies) {
-        if (enemy.floorIndex === this.player.floorIndex && enemy.state === EnemyState.CHASING) {
-          const d = enemy.getPosition().distanceTo(pp);
-          if (d < nearestChasingDist) nearestChasingDist = d;
-        }
+    for (const enemy of this.enemies) {
+      if (enemy.floorIndex === this.player.floorIndex && enemy.state === EnemyState.CHASING) {
+        const d = enemy.getPosition().distanceTo(pp);
+        if (d < nearestChasingDist) nearestChasingDist = d;
       }
     }
 
     // Update proximity drone + proximity tension growl
-    this.audio.updateProximityDrone(this.debugNoEnemy ? -1 : nearestDist);
-    this.audio.updateProximityTension(this.debugNoEnemy ? -1 : nearestDist);
+    this.audio.updateProximityDrone(nearestDist);
+    this.audio.updateProximityTension(nearestDist);
 
     // Chase tension — rising high-pitch shriek
     const isChasing = nearestChasingDist < Infinity;
@@ -813,6 +808,31 @@ export class Game {
           ctx.beginPath();
           ctx.arc(ec.x * cellW + cellW / 2, ec.z * cellH + cellH / 2, Math.max(dotMin * 0.8, 1.5), 0, Math.PI * 2);
           ctx.fill();
+
+          // Debug: show enemy's current target as a small ×
+          const tgt = enemy.getSearchTarget();
+          if (tgt) {
+            const tc = this.maze.worldToCell(tgt.x, tgt.z, fi);
+            const tx = tc.x * cellW + cellW / 2;
+            const tz = tc.z * cellH + cellH / 2;
+            const r = Math.max(dotMin * 0.6, 1.2);
+            ctx.strokeStyle = enemy.state === EnemyState.CHASING ? '#f44' : '#f84';
+            ctx.lineWidth = 1;
+            ctx.globalAlpha = 0.7;
+            // × marker
+            ctx.beginPath();
+            ctx.moveTo(tx - r, tz - r); ctx.lineTo(tx + r, tz + r);
+            ctx.moveTo(tx + r, tz - r); ctx.lineTo(tx - r, tz + r);
+            ctx.stroke();
+            // Line from enemy to target
+            ctx.setLineDash([2, 2]);
+            ctx.beginPath();
+            ctx.moveTo(ec.x * cellW + cellW / 2, ec.z * cellH + cellH / 2);
+            ctx.lineTo(tx, tz);
+            ctx.stroke();
+            ctx.setLineDash([]);
+            ctx.globalAlpha = 1.0;
+          }
         }
       } else {
         // Compass: show sound pings that fade over 3 seconds
@@ -934,17 +954,10 @@ export class Game {
       }
     });
 
-    // No-enemy toggle
-    const noEnemyCb = document.getElementById('dbg-noenemy') as HTMLInputElement;
-    noEnemyCb.addEventListener('change', () => {
-      this.debugNoEnemy = noEnemyCb.checked;
-      if (this.debugNoEnemy) {
-        for (const enemy of this.enemies) {
-          enemy.mesh.visible = false;
-        }
-        this.audio.updateProximityDrone(-1);
-    this.audio.updateProximityTension(-1);
-      }
+    // Fast forward toggle (3× game speed for observing enemy behavior)
+    const ffCb = document.getElementById('dbg-fastforward') as HTMLInputElement;
+    ffCb.addEventListener('change', () => {
+      this.debugFastForward = ffCb.checked;
     });
 
     // Reveal map + enemies toggle
@@ -1003,7 +1016,6 @@ export class Game {
   private endGame() {
     this.running = false;
     cancelAnimationFrame(this.raf);
-    this.audio.stopAll();
     document.exitPointerLock();
     // Close debug menu if open
     this.debugMenuOpen = false;
@@ -1015,7 +1027,10 @@ export class Game {
     }, 2500);
   }
 
+  deactivateGamepad() { this.gamepad.deactivate(); }
+
   restart() {
+    this.audio.stopAll();
     this.mazeRenderer.dispose(this.scene);
     this.lights.forEach(l => this.scene.remove(l));
     this.lights = [];
@@ -1028,12 +1043,12 @@ export class Game {
     this.items = [];
     // Reset debug state
     this.debugLight = false;
-    this.debugNoEnemy = false;
     this.debugRevealMap = false;
+    this.debugFastForward = false;
     this.scene.remove(this.debugAmbient);
     (document.getElementById('dbg-fullbright') as HTMLInputElement).checked = false;
-    (document.getElementById('dbg-noenemy') as HTMLInputElement).checked = false;
     (document.getElementById('dbg-revealmap') as HTMLInputElement).checked = false;
+    (document.getElementById('dbg-fastforward') as HTMLInputElement).checked = false;
     // Clear dynamic objects (keep camera)
     this.scene.children
       .filter(c => c !== this.camera)

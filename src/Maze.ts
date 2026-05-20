@@ -402,18 +402,9 @@ export class MazeGenerator {
       reachableSet.has(`${c.x},${c.z}`)
     );
 
-    // Prefer cells far from entry for more exploration
-    candidates.sort((a, b) => {
-      const dA = Math.abs(a.x - fa.entryCell.x) + Math.abs(a.z - fa.entryCell.z);
-      const dB = Math.abs(b.x - fa.entryCell.x) + Math.abs(b.z - fa.entryCell.z);
-      return dB - dA;
-    });
-
-    // Pick from the farthest third
-    const pool = candidates.slice(0, Math.max(1, Math.floor(candidates.length / 3)));
-    if (!pool.length) return;
-
-    const pick = pool[Math.floor(Math.random() * pool.length)];
+    // Pick randomly — player needs a key to use stairs anyway
+    if (!candidates.length) return;
+    const pick = candidates[Math.floor(Math.random() * candidates.length)];
     pick.stairs = 'up';
 
     // Ensure a wall behind the stairs (opposite to the open/approach side)
@@ -443,27 +434,34 @@ export class MazeGenerator {
     const openE = !cell.walls.E;
     const openW = !cell.walls.W;
 
-    // Determine approach side (where the player comes from) and close the opposite
+    // Close all walls except the approach side — stairs sit in a 3-walled alcove
+    const closeWall = (dir: 'N' | 'S' | 'E' | 'W') => {
+      cell.walls[dir] = true;
+      let nb: Cell | undefined;
+      if (dir === 'N' && z > 0) { nb = floor.cells[z - 1]?.[x]; if (nb) nb.walls.S = true; }
+      if (dir === 'S' && z < floor.height - 1) { nb = floor.cells[z + 1]?.[x]; if (nb) nb.walls.N = true; }
+      if (dir === 'E' && x < floor.width - 1) { nb = floor.cells[z]?.[x + 1]; if (nb) nb.walls.W = true; }
+      if (dir === 'W' && x > 0) { nb = floor.cells[z]?.[x - 1]; if (nb) nb.walls.E = true; }
+    };
+
+    // Determine approach direction and close the other three sides
+    // Keep the approach side open, close back + both sides for an alcove
     if (openS && !openN) {
-      // Approach from south → back is north: ensure N wall
-      cell.walls.N = true;
-      if (z > 0) { const nb = floor.cells[z - 1]?.[x]; if (nb) nb.walls.S = true; }
+      closeWall('N'); closeWall('E'); closeWall('W');  // approach from south
     } else if (openN && !openS) {
-      cell.walls.S = true;
-      if (z < floor.height - 1) { const nb = floor.cells[z + 1]?.[x]; if (nb) nb.walls.N = true; }
+      closeWall('S'); closeWall('E'); closeWall('W');  // approach from north
     } else if (openE && !openW) {
-      cell.walls.W = true;
-      if (x > 0) { const nb = floor.cells[z]?.[x - 1]; if (nb) nb.walls.E = true; }
+      closeWall('W'); closeWall('N'); closeWall('S');  // approach from east
     } else if (openW && !openE) {
-      cell.walls.E = true;
-      if (x < floor.width - 1) { const nb = floor.cells[z]?.[x + 1]; if (nb) nb.walls.W = true; }
+      closeWall('E'); closeWall('N'); closeWall('S');  // approach from west
     } else if (openS) {
-      // Multiple open — approach from south, close north
-      cell.walls.N = true;
-      if (z > 0) { const nb = floor.cells[z - 1]?.[x]; if (nb) nb.walls.S = true; }
+      closeWall('N'); closeWall('E'); closeWall('W');  // multiple open — prefer south
     } else if (openN) {
-      cell.walls.S = true;
-      if (z < floor.height - 1) { const nb = floor.cells[z + 1]?.[x]; if (nb) nb.walls.N = true; }
+      closeWall('S'); closeWall('E'); closeWall('W');
+    } else if (openE) {
+      closeWall('W'); closeWall('N'); closeWall('S');
+    } else if (openW) {
+      closeWall('E'); closeWall('N'); closeWall('S');
     }
   }
 
@@ -739,12 +737,11 @@ export class MazeGenerator {
       Math.abs(c.x - ex) + Math.abs(c.z - ez) >= MIN_SPAWN_DIST
     );
 
-    // Sort farthest from entry first for better spread
-    candidates.sort((a, b) => {
-      const dA = Math.abs(a.x - ex) + Math.abs(a.z - ez);
-      const dB = Math.abs(b.x - ex) + Math.abs(b.z - ez);
-      return dB - dA;
-    });
+    // Shuffle candidates for random spread — distance constraints handle separation
+    for (let i = candidates.length - 1; i > 0; i--) {
+      const j = Math.floor(Math.random() * (i + 1));
+      [candidates[i], candidates[j]] = [candidates[j], candidates[i]];
+    }
 
     // Greedy pick: each item must be far from picked items AND stairs/exit
     const result: Cell[] = [];
@@ -864,8 +861,10 @@ export class MazeRenderer {
           // Draw N wall — check BOTH sides; skip only when both solid (hidden)
           const hasNWall = cell.walls.N || (north != null && north.walls.S);
           if (hasNWall && !(isSolid(cell) && isSolid(north))) {
-            const w = this.makeWall(wallMat, CELL_SIZE + 0.01, wH, 0.22);
-            w.position.set(wx, yBase + wH / 2, wz - CELL_SIZE / 2);
+            const wallY = yBase + wH / 2;
+            const wallZ = wz - CELL_SIZE / 2;
+            const w = this.makeWall(wallMat, CELL_SIZE + 0.01, wH, 0.22, wx, wallY, wallZ);
+            w.position.set(wx, wallY, wallZ);
             group.add(w);
             // Window panel on house/village outer walls
             if (windowMat && z <= 2) {
@@ -879,8 +878,10 @@ export class MazeRenderer {
           // Draw W wall — check BOTH sides; skip only when both solid (hidden)
           const hasWWall = cell.walls.W || (west != null && west.walls.E);
           if (hasWWall && !(isSolid(cell) && isSolid(west))) {
-            const w = this.makeWall(wallMat, 0.22, wH, CELL_SIZE + 0.01);
-            w.position.set(wx - CELL_SIZE / 2, yBase + wH / 2, wz);
+            const wallX = wx - CELL_SIZE / 2;
+            const wallY2 = yBase + wH / 2;
+            const w = this.makeWall(wallMat, 0.22, wH, CELL_SIZE + 0.01, wallX, wallY2, wz);
+            w.position.set(wallX, wallY2, wz);
             group.add(w);
             if (windowMat && x <= 2) {
               const wg = new THREE.PlaneGeometry(CELL_SIZE * 0.5, wH * 0.4);
@@ -897,8 +898,10 @@ export class MazeRenderer {
             // Avoid duplicate: the N-wall pass of cell (x,z+1) may have drawn this already.
             // Draw here only for boundary or when the N pass wouldn't have caught it.
             if (z === H - 1 || (cell.walls.S && !south?.walls.N) || (!cell.walls.S && south?.walls.N)) {
-              const w = this.makeWall(wallMat, CELL_SIZE + 0.01, wH, 0.22);
-              w.position.set(wx, yBase + wH / 2, wz + CELL_SIZE / 2);
+              const sWallY = yBase + wH / 2;
+              const sWallZ = wz + CELL_SIZE / 2;
+              const w = this.makeWall(wallMat, CELL_SIZE + 0.01, wH, 0.22, wx, sWallY, sWallZ);
+              w.position.set(wx, sWallY, sWallZ);
               group.add(w);
             }
           }
@@ -906,17 +909,19 @@ export class MazeRenderer {
           const hasEWall = cell.walls.E || (east != null && east.walls.W);
           if (x === W - 1 || (hasEWall && !(isSolid(cell) && isSolid(east)))) {
             if (x === W - 1 || (cell.walls.E && !east?.walls.W) || (!cell.walls.E && east?.walls.W)) {
-              const w = this.makeWall(wallMat, 0.22, wH, CELL_SIZE + 0.01);
-              w.position.set(wx + CELL_SIZE / 2, yBase + wH / 2, wz);
+              const eWallX = wx + CELL_SIZE / 2;
+              const eWallY = yBase + wH / 2;
+              const w = this.makeWall(wallMat, 0.22, wH, CELL_SIZE + 0.01, eWallX, eWallY, wz);
+              w.position.set(eWallX, eWallY, wz);
               group.add(w);
             }
           }
 
           // Obstacle
           if (cell.hasObstacle) {
-            const og = new THREE.BoxGeometry(CELL_SIZE * 0.88, OBSTACLE_HEIGHT, CELL_SIZE * 0.88);
-            const om = new THREE.Mesh(og, obsMat);
-            om.position.set(wx, yBase + OBSTACLE_HEIGHT / 2, wz);
+            const obsY = yBase + OBSTACLE_HEIGHT / 2;
+            const om = this.makeWall(obsMat, CELL_SIZE * 0.88, OBSTACLE_HEIGHT, CELL_SIZE * 0.88, wx, obsY, wz);
+            om.position.set(wx, obsY, wz);
             group.add(om);
           }
 
@@ -960,17 +965,18 @@ export class MazeRenderer {
     const openE = !cell.walls.E && x < floor.width - 1 && !isSolid(floor.cells[z]?.[x + 1]);
     const openW = !cell.walls.W && x > 0 && !isSolid(floor.cells[z]?.[x - 1]);
 
-    // Face AWAY from the open side (player approaches from open side, stairs ascend away)
-    if (openS && !openN) return Math.PI;          // open south → face north
-    if (openN && !openS) return 0;                // open north → face south
-    if (openE && !openW) return Math.PI / 2;      // open east → face west
-    if (openW && !openE) return -Math.PI / 2;     // open west → face east
+    // Stairs ascend from +Z to -Z in local space (step 0 at +Z, top at -Z).
+    // Rotate so the bottom step faces the open/approach direction.
+    if (openS && !openN) return 0;                // approach from south → no rotation
+    if (openN && !openS) return Math.PI;          // approach from north → flip 180°
+    if (openE && !openW) return -Math.PI / 2;     // approach from east → rotate -90°
+    if (openW && !openE) return Math.PI / 2;      // approach from west → rotate 90°
 
     // Multiple open sides — prefer S, then N, E, W
-    if (openS) return Math.PI;
-    if (openN) return 0;
-    if (openE) return Math.PI / 2;
-    if (openW) return -Math.PI / 2;
+    if (openS) return 0;
+    if (openN) return Math.PI;
+    if (openE) return -Math.PI / 2;
+    if (openW) return Math.PI / 2;
 
     return 0; // fallback: face south
   }
@@ -988,8 +994,8 @@ export class MazeRenderer {
     for (let i = 0; i < steps; i++) {
       const g = new THREE.BoxGeometry(stepW, stepH * 0.9, stepD);
       const m = new THREE.Mesh(g, mat);
-      // Position relative to center (0,0,0) — stairs go from -Z to +Z, ascending
-      m.position.set(0, yBase + stepH * i + stepH * 0.45, -CELL_SIZE / 2 + stepD * i + stepD / 2);
+      // Position relative to center (0,0,0) — stairs go from +Z to -Z, ascending
+      m.position.set(0, yBase + stepH * i + stepH * 0.45, CELL_SIZE / 2 - stepD * i - stepD / 2);
       stairGroup.add(m);
       this.stairMeshes.push(m);
     }
@@ -1035,8 +1041,34 @@ export class MazeRenderer {
     }
   }
 
-  private makeWall(mat: THREE.Material, w: number, h: number, d: number): THREE.Mesh {
-    const m = new THREE.Mesh(new THREE.BoxGeometry(w, h, d), mat);
+  private makeWall(mat: THREE.Material, w: number, h: number, d: number, wx = 0, wy = 0, wz = 0): THREE.Mesh {
+    const geo = new THREE.BoxGeometry(w, h, d);
+    // Remap UVs to world-space so textures tile seamlessly across walls
+    const pos = geo.attributes.position;
+    const uv  = geo.attributes.uv;
+    const scale = 1 / CELL_SIZE; // 1 texture repeat per cell
+    for (let i = 0; i < pos.count; i++) {
+      const px = pos.getX(i) + wx;
+      const py = pos.getY(i) + wy;
+      const pz = pos.getZ(i) + wz;
+      const nx = geo.attributes.normal.getX(i);
+      const ny = geo.attributes.normal.getY(i);
+      const nz = geo.attributes.normal.getZ(i);
+      // Project onto the plane perpendicular to the face normal
+      if (Math.abs(nx) > 0.5) {
+        // E/W face → use Z, Y
+        uv.setXY(i, pz * scale, py * scale);
+      } else if (Math.abs(ny) > 0.5) {
+        // top/bottom face → use X, Z
+        uv.setXY(i, px * scale, pz * scale);
+      } else {
+        // N/S face → use X, Y
+        uv.setXY(i, px * scale, py * scale);
+      }
+    }
+    uv.needsUpdate = true;
+
+    const m = new THREE.Mesh(geo, mat);
     m.castShadow = true;
     m.receiveShadow = true;
     return m;
