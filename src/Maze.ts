@@ -21,7 +21,7 @@ export const OBSTACLE_HEIGHT = 0.85;
 
 const THEMES: FloorTheme[] = [
   {
-    name: 'Sótano',
+    name: 'Basement',
     wallColor:    0x3d2b1f,
     floorColor:   0x1a1210,
     ceilColor:    0x0d0908,
@@ -35,7 +35,7 @@ const THEMES: FloorTheme[] = [
     wallHeight:   WALL_HEIGHT,
   },
   {
-    name: 'La Casa',
+    name: 'The House',
     wallColor:    0x8b7250,
     floorColor:   0x5a3e28,
     ceilColor:    0x3a2a1a,
@@ -49,7 +49,7 @@ const THEMES: FloorTheme[] = [
     wallHeight:   WALL_HEIGHT,
   },
   {
-    name: 'El Pueblo',
+    name: 'The Village',
     wallColor:    0x5a5040,
     floorColor:   0x38342a,
     ceilColor:    0x000000,

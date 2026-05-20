@@ -3,6 +3,7 @@
  * Each enemy gets its own PannerNode, loop, and one-shot sources.
  * Buffers (MP3s + procedural) are loaded/generated once and shared.
  */
+import soundConfig from './SoundConfig';
 
 const IDLE_FILES    = ['idle-01.mp3', 'idle-02.mp3', 'idle-03.mp3', 'idle-04.mp3', 'idle-05.mp3', 'idle-06.mp3'];
 const CHASING_FILES = ['chasing-01.mp3', 'chasing-02.mp3', 'chasing-03.mp3', 'chasing-04.mp3', 'chasing-05.mp3', 'chasing-06.mp3'];
@@ -29,6 +30,9 @@ class EnemyChannel {
   private loop: AudioBufferSourceNode | null = null;
   private loopGain: GainNode | null = null;
   private loopState: string = '';
+
+  // Constant chains loop (independent of state)
+  private chainsLoop: AudioBufferSourceNode | null = null;
 
   // MP3 one-shot
   private oneShot: AudioBufferSourceNode | null = null;
@@ -181,9 +185,29 @@ class EnemyChannel {
     }
   }
 
+  /** Start the constant chains loop (call once after channel creation, when buffer is loaded) */
+  startChainsLoop(buf: AudioBuffer, volume: number) {
+    if (this.chainsLoop) return; // already playing
+    const src = this.ctx.createBufferSource();
+    src.buffer = buf;
+    src.loop = true;
+    // Random start offset so enemies don't sync
+    src.loopStart = 0;
+    src.loopEnd = buf.duration;
+    const g = this.ctx.createGain();
+    g.gain.value = volume;
+    src.connect(g).connect(this.panner);
+    src.start(0, Math.random() * buf.duration);
+    this.chainsLoop = src;
+  }
+
   stop() {
     this.stopLoop();
     this.stopOneShot();
+    if (this.chainsLoop) {
+      try { this.chainsLoop.stop(); } catch {}
+      this.chainsLoop = null;
+    }
     this.currentState = '';
     this.nextTriggerTime = 0;
   }
@@ -289,6 +313,9 @@ interface SharedBuffers {
   deathGrowlBuf: AudioBuffer | null;
   idleMp3s:     AudioBuffer[];
   chasingMp3s:  AudioBuffer[];
+  jumpscareMp3s: AudioBuffer[];
+  ambienceBufs: (AudioBuffer | null)[];  // per-floor ambient loops
+  chainsBuf: AudioBuffer | null;         // constant enemy loop (chains)
 }
 
 export class AudioManager {
@@ -298,10 +325,14 @@ export class AudioManager {
   private enemyReverbBus!: GainNode; // shared reverb bus for per-enemy distance reverb
   private shared: SharedBuffers = {
     searchingBuf: null, chasingBuf: null, alertBuf: null, deathGrowlBuf: null,
-    idleMp3s: [], chasingMp3s: [],
+    idleMp3s: [], chasingMp3s: [], jumpscareMp3s: [], ambienceBufs: [], chainsBuf: null,
   };
   private channels: Map<number, EnemyChannel> = new Map();
   private nextChannelId = 0;
+
+  // Floor ambience — multiple spatialized sources per floor
+  private ambienceSources: AudioBufferSourceNode[] = [];
+  private currentAmbienceFloor = -1;
 
   init() {
     this.ctx = new AudioContext();
@@ -409,16 +440,37 @@ export class AudioManager {
         return null;
       }
     };
-    const [alertBuf, deathGrowlBuf, ...rest] = await Promise.all([
+    // Ambience files from config (filter out undefined floors)
+    const ambienceFiles = soundConfig.floorAmbience.map(a => a?.file);
+
+    const [alertBuf, deathGrowlBuf, chainsBuf, ...rest] = await Promise.all([
       load(ALERT_FILE),
       load('death-growl.mp3'),
+      soundConfig.enemyLoop ? load(soundConfig.enemyLoop.file) : Promise.resolve(null),
       ...IDLE_FILES.map(f => load(f)),
       ...CHASING_FILES.map(f => load(f)),
+      ...soundConfig.jumpscares.map(f => load(f)),
+      ...ambienceFiles.map(f => f ? load(f) : Promise.resolve(null)),
     ]);
     this.shared.alertBuf      = alertBuf;
     this.shared.deathGrowlBuf = deathGrowlBuf;
-    this.shared.idleMp3s    = rest.slice(0, IDLE_FILES.length).filter(Boolean) as AudioBuffer[];
-    this.shared.chasingMp3s = rest.slice(IDLE_FILES.length).filter(Boolean) as AudioBuffer[];
+    this.shared.chainsBuf     = chainsBuf;
+
+    const idleEnd = IDLE_FILES.length;
+    const chasingEnd = idleEnd + CHASING_FILES.length;
+    const jumpscareEnd = chasingEnd + soundConfig.jumpscares.length;
+
+    this.shared.idleMp3s      = rest.slice(0, idleEnd).filter(Boolean) as AudioBuffer[];
+    this.shared.chasingMp3s   = rest.slice(idleEnd, chasingEnd).filter(Boolean) as AudioBuffer[];
+    this.shared.jumpscareMp3s = rest.slice(chasingEnd, jumpscareEnd).filter(Boolean) as AudioBuffer[];
+    this.shared.ambienceBufs  = rest.slice(jumpscareEnd);
+
+    // Start chains loop on any channels that were created before the buffer loaded
+    if (this.shared.chainsBuf && soundConfig.enemyLoop) {
+      for (const ch of this.channels.values()) {
+        ch.startChainsLoop(this.shared.chainsBuf, soundConfig.enemyLoop.volume);
+      }
+    }
   }
 
   resume() { this.ctx?.resume(); }
@@ -428,6 +480,10 @@ export class AudioManager {
     if (!this.ctx) return -1;
     const id = this.nextChannelId++;
     const ch = new EnemyChannel(this.ctx, this.masterGain, this.enemyReverbBus);
+    // Start chains loop immediately if buffer is already loaded
+    if (this.shared.chainsBuf && soundConfig.enemyLoop) {
+      ch.startChainsLoop(this.shared.chainsBuf, soundConfig.enemyLoop.volume);
+    }
     this.channels.set(id, ch);
     return id;
   }
@@ -961,6 +1017,17 @@ export class AudioManager {
       growl.start();
     }
 
+    // Play a random jumpscare sound on top
+    if (this.shared.jumpscareMp3s.length > 0) {
+      const idx = Math.floor(Math.random() * this.shared.jumpscareMp3s.length);
+      const js = this.ctx.createBufferSource();
+      js.buffer = this.shared.jumpscareMp3s[idx];
+      const jsGain = this.ctx.createGain();
+      jsGain.gain.value = 0.8;
+      js.connect(jsGain).connect(this.masterGain);
+      js.start();
+    }
+
     // Kill the chase tension layer immediately
     if (this.chaseGain) this.chaseGain.gain.value = 0;
     if (this.chaseNoiseGain) this.chaseNoiseGain.gain.value = 0;
@@ -1062,6 +1129,56 @@ export class AudioManager {
     src.start();
   }
 
+  /**
+   * Start or switch spatialized floor ambience. Each source is placed at a
+   * different position and starts at a random offset for variation.
+   * @param positions World-space positions for each source (from MapDistribution)
+   */
+  setFloorAmbience(floorIndex: number, positions: { x: number; y: number; z: number }[]) {
+    if (!this.ctx || floorIndex === this.currentAmbienceFloor) return;
+
+    // Stop current ambience sources
+    this.stopAmbience();
+    this.currentAmbienceFloor = floorIndex;
+
+    const buf = this.shared.ambienceBufs[floorIndex];
+    const config = soundConfig.floorAmbience[floorIndex];
+    if (!buf || !config) return;
+
+    const count = Math.min(config.sources, positions.length);
+    for (let i = 0; i < count; i++) {
+      const src = this.ctx.createBufferSource();
+      src.buffer = buf;
+      src.loop = true;
+
+      // Spatialized panner — HRTF for realistic 3D positioning
+      const panner = this.ctx.createPanner();
+      panner.panningModel = 'HRTF';
+      panner.distanceModel = 'inverse';
+      panner.refDistance = 3;
+      panner.maxDistance = 60;
+      panner.rolloffFactor = 1.5;
+      panner.setPosition(positions[i].x, positions[i].y, positions[i].z);
+
+      const gain = this.ctx.createGain();
+      gain.gain.value = config.volume;
+
+      src.connect(panner).connect(gain).connect(this.masterGain);
+
+      // Start at a random offset so sources are out of phase
+      const offset = Math.random() * buf.duration;
+      src.start(0, offset);
+      this.ambienceSources.push(src);
+    }
+  }
+
+  private stopAmbience() {
+    for (const src of this.ambienceSources) {
+      try { src.stop(); } catch {}
+    }
+    this.ambienceSources = [];
+  }
+
   /** Silence every sound source without closing the AudioContext (safe to restart). */
   stopAll() {
     this.stopEnemySound();
@@ -1077,6 +1194,8 @@ export class AudioManager {
     if (this.proxOsc3) { try { this.proxOsc3.stop(); } catch {} this.proxOsc3 = null; }
     if (this.proxOsc4) { try { this.proxOsc4.stop(); } catch {} this.proxOsc4 = null; }
     if (this.proxNoiseSource) { try { this.proxNoiseSource.stop(); } catch {} this.proxNoiseSource = null; }
+    this.stopAmbience();
+    this.currentAmbienceFloor = -1;
     // Zero out master gain to kill any lingering scheduled notes / tails
     if (this.masterGain) this.masterGain.gain.value = 0;
   }

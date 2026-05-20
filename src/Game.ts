@@ -12,6 +12,8 @@ import { HorrorShader } from './HorrorShader';
 import { MobileControls } from './MobileControls';
 import { inputMode, isMobileDevice } from './InputMode';
 import { GamepadManager } from './GamepadManager';
+import { distributePositions } from './MapDistribution';
+import soundConfig from './SoundConfig';
 
 const NUM_FLOORS = 3;
 
@@ -85,8 +87,6 @@ export class Game {
   private messageEl:         HTMLElement;
   private batteryFillEl!:    HTMLElement;
   private batteryIconEl!:    HTMLElement;
-  private flashStatusEl!:    HTMLElement;
-  private batteryPctEl!:     HTMLElement;
   private itemKeyEl!:        HTMLElement;
   private itemMapEl!:        HTMLElement;
   private itemCompassEl!:    HTMLElement;
@@ -140,8 +140,6 @@ export class Game {
     this.messageEl        = document.getElementById('message')!;
     this.batteryFillEl    = document.getElementById('battery-fill')!;
     this.batteryIconEl    = document.getElementById('battery-icon')!;
-    this.flashStatusEl    = document.getElementById('flashlight-status')!;
-    this.batteryPctEl     = document.getElementById('battery-pct')!;
 
     this.minimapCanvas = document.getElementById('minimap') as HTMLCanvasElement;
     this.minimapCtx    = this.minimapCanvas.getContext('2d')!;
@@ -364,6 +362,14 @@ export class Game {
     // Reverb per floor: catacombs = very reverberant, house = moderate, village = open air
     const reverbLevels = [1.2, 0.65, 0.35];
     this.audio.setReverbLevel(reverbLevels[floorIdx] ?? 0.3);
+
+    // Floor ambience (from SoundConfig)
+    const ambCfg = soundConfig.floorAmbience[floorIdx];
+    const floor = this.maze.floors[floorIdx];
+    const ambiencePositions = ambCfg
+      ? distributePositions(ambCfg.sources, floor.width, floor.height, WALL_HEIGHT * floorIdx)
+      : [];
+    this.audio.setFloorAmbience(floorIdx, ambiencePositions);
   }
 
   private loop = () => {
@@ -469,7 +475,7 @@ export class Game {
 
     if (isExit && fi === NUM_FLOORS - 1) {
       if (hasKey) {
-        this.showMessage('¡ESCAPASTE!', '#0f8', 4000);
+        this.showMessage('YOU ESCAPED!', '#0f8', 4000);
         this.endGame();
         return;
       } else {
@@ -727,7 +733,7 @@ export class Game {
   }
 
   private showKeyNeeded() {
-    this.keyNeededEl.textContent = '🔑 NECESITAS LA LLAVE';
+    this.keyNeededEl.textContent = '🔑 YOU NEED THE KEY';
     this.keyNeededEl.style.opacity = '1';
     setTimeout(() => { this.keyNeededEl.style.opacity = '0'; }, 1500);
   }
@@ -735,7 +741,7 @@ export class Game {
   private updateHUD(t: number) {
     const fi = this.player.floorIndex;
     this.floorTextEl.textContent =
-      `PLANTA ${fi + 1} / ${NUM_FLOORS}  —  ${this.maze.floors[fi].theme.name.toUpperCase()}`;
+      `FLOOR ${fi + 1} / ${NUM_FLOORS}  —  ${this.maze.floors[fi].theme.name.toUpperCase()}`;
 
     // Battery bar
     const pct = this.flashBattery;
@@ -743,9 +749,6 @@ export class Game {
     this.batteryFillEl.style.background =
       pct > 60 ? '#4af' : pct > 25 ? '#fa4' : '#f44';
     this.batteryIconEl.textContent = this.flashlightOn ? '🔦' : '🔋';
-    this.flashStatusEl.textContent = this.flashlightOn ? 'ON' : 'OFF';
-    this.flashStatusEl.style.color = this.flashlightOn ? '#4af' : '#888';
-    this.batteryPctEl.textContent = `${Math.round(pct)}%`;
 
     // Battery low blinking warning
     if (pct < 20 && pct > 0 && this.flashlightOn) {
@@ -1072,7 +1075,7 @@ export class Game {
     document.getElementById('debug-menu')!.style.display = 'none';
     setTimeout(() => {
       const overlay = document.getElementById('overlay')!;
-      document.getElementById('start-btn')!.textContent = 'REINTENTAR';
+      document.getElementById('start-btn')!.textContent = 'RETRY';
       overlay.style.display = 'flex';
     }, 2500);
   }

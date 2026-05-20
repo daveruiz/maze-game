@@ -169,15 +169,15 @@ export class Enemy {
 
     let bestScore = -Infinity;
     let bestCell = reachable[0];
-    const MIN_DIST_FROM_PLAYER = 10; // cells — hard minimum distance from entry
+    const MIN_DIST_FROM_PLAYER = 15; // cells — constant safe distance from entry
     for (const c of reachable) {
       const dx = c.x - entry.x, dz = c.z - entry.z;
       const distFromEntry = Math.sqrt(dx * dx + dz * dz);
       // Must be far from entry (where player spawns)
       let score = Math.min(distFromEntry, 25);
-      // Heavy penalty if too close to player spawn
+      // Hard penalty if too close to player spawn — effectively disqualifies nearby cells
       if (distFromEntry < MIN_DIST_FROM_PLAYER) {
-        score -= (MIN_DIST_FROM_PLAYER - distFromEntry) * 10;
+        score -= (MIN_DIST_FROM_PLAYER - distFromEntry) * 20;
       }
 
       // Prefer cells near assigned quadrant center (strong spatial spread)

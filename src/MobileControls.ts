@@ -190,7 +190,7 @@ export class MobileControls {
         border: 2px solid rgba(255,255,255,0.35);
         background: transparent;
         color: rgba(255,255,255,0.6);
-        font-family: 'Courier New', monospace;
+        font-family: "Barriecito", system-ui;
         font-size: 10px;
         font-weight: bold;
         letter-spacing: 1px;
@@ -232,7 +232,7 @@ export class MobileControls {
         align-items: center; justify-content: center;
         z-index: 60;
         color: #fff;
-        font-family: 'Courier New', monospace;
+        font-family: "Barriecito", system-ui;
         touch-action: none;
       }
       #mobile-rotate-notice .rotate-icon { font-size: 3rem; margin-bottom: 16px; }
@@ -250,7 +250,7 @@ export class MobileControls {
         align-items: center; justify-content: center;
         z-index: 50;
         color: #fff;
-        font-family: 'Courier New', monospace;
+        font-family: "Barriecito", system-ui;
         touch-action: none;
       }
       #fullscreen-cta .cta-icon { font-size: 3rem; margin-bottom: 16px; }
