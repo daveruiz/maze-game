@@ -28,6 +28,55 @@ const preloadPromise = Promise.all([
   })),
 ]).then(() => {});
 
+// ── Menu atmosphere drone ────────────────────────────────────────────────
+// Identical waveform to the in-game proximity drone; played at a low gain
+// to simulate the enemy being far away while the title screen is visible.
+let menuCtx: AudioContext | null = null;
+let menuDroneGain: GainNode | null = null;
+
+function startMenuDrone() {
+  if (menuCtx) return;
+  try { menuCtx = new AudioContext(); } catch { return; }
+
+  const sr  = menuCtx.sampleRate;
+  const dur = 8.0;
+  const buf = menuCtx.createBuffer(1, Math.floor(sr * dur), sr);
+  const d   = buf.getChannelData(0);
+  for (let i = 0; i < d.length; i++) {
+    const t      = i / sr;
+    const sub    = Math.sin(2 * Math.PI * 32 * t) * 0.4;
+    const rumble = Math.sin(2 * Math.PI * 48 * t + Math.sin(t * 2.0) * 3.0) * 0.3;
+    const grind  = Math.sin(2 * Math.PI * 73 * t) * 0.15;
+    const noise  = (Math.random() - 0.5) * 0.08;
+    const lfo    = 0.7 + 0.3 * Math.sin(2 * Math.PI * 0.25 * t);
+    d[i] = (sub + rumble + grind + noise) * lfo;
+  }
+
+  const src  = menuCtx.createBufferSource();
+  src.buffer = buf;
+  src.loop   = true;
+
+  const gain = menuCtx.createGain();
+  gain.gain.value = 0;
+  src.connect(gain).connect(menuCtx.destination);
+  src.start();
+  menuDroneGain = gain;
+
+  // Fade in slowly — simulates enemy lurking far away
+  gain.gain.linearRampToValueAtTime(0.10, menuCtx.currentTime + 4.0);
+}
+
+function stopMenuDrone() {
+  if (!menuDroneGain || !menuCtx) return;
+  const now = menuCtx.currentTime;
+  menuDroneGain.gain.setValueAtTime(menuDroneGain.gain.value, now);
+  menuDroneGain.gain.linearRampToValueAtTime(0, now + 0.5);
+  setTimeout(() => { menuCtx?.close(); menuCtx = null; menuDroneGain = null; }, 600);
+}
+
+// Start the drone on first pointer interaction with the page
+document.addEventListener('pointerdown', startMenuDrone, { once: true });
+
 // Install input-mode detection early so first touch/mouse is caught
 inputMode.install();
 
@@ -47,6 +96,8 @@ inputMode.onChange((mode) => {
 });
 
 startBtn.addEventListener('click', () => {
+  stopMenuDrone();
+
   // Snap blackout to fully opaque behind the overlay (no transition)
   blackout.style.transition = 'none';
   blackout.style.opacity = '1';
