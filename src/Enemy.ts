@@ -86,6 +86,8 @@ export class Enemy {
   private soundWallCount = 0;
   private soundVirtualPos: THREE.Vector3 = new THREE.Vector3();
 
+  private noticeCooldown = 0;
+
   // Directional sprites
   private texFront!: THREE.Texture;
   private texBack!:  THREE.Texture;
@@ -340,10 +342,16 @@ export class Enemy {
         gain += SUSPICION_BUILD_NOISE * playerNoise * f * f;
       }
       if (gain > 0) {
+        const prevSuspicion = this.suspicion;
         this.suspicion = Math.min(1, this.suspicion + gain * dt);
+        if (this.noticeCooldown <= 0 && prevSuspicion < 0.05 && this.suspicion >= 0.05) {
+          this.audio.playChannelNotice(this.channelId);
+          this.noticeCooldown = 12;
+        }
       } else {
         this.suspicion = Math.max(0, this.suspicion - SUSPICION_DECAY * dt);
       }
+      this.noticeCooldown -= dt;
       if (this.suspicion >= 0.99) {
         this.suspicion = 1;
         this.state = EnemyState.CHASING;

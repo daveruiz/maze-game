@@ -278,6 +278,22 @@ class EnemyChannel {
     };
   }
 
+  playNotice(buf: AudioBuffer | null) {
+    if (!buf) return;
+    if (this.oneShot && this.oneShotPriority >= 2) return;
+    this.stopOneShot();
+    const src = this.ctx.createBufferSource();
+    src.buffer = buf;
+    src.playbackRate.value = PLAYBACK_RATE;
+    const g = this.ctx.createGain();
+    g.gain.value = 0.4;
+    src.connect(g).connect(this.panner);
+    src.start();
+    this.oneShot = src;
+    this.oneShotPriority = 1;
+    src.onended = () => { if (this.oneShot === src) { this.oneShot = null; this.oneShotPriority = 0; } };
+  }
+
   private playRandomOneShot(pool: AudioBuffer[], volume: number, priority: number) {
     if (pool.length === 0) return;
     if (this.oneShot && this.oneShotPriority >= priority) return;
@@ -326,6 +342,7 @@ interface SharedBuffers {
   jumpscareMp3s: AudioBuffer[];
   ambienceBufs: (AudioBuffer | null)[];  // per-floor ambient loops
   chainsBuf: AudioBuffer | null;         // constant enemy loop (chains)
+  noticeBuf: AudioBuffer | null;         // first-detection notice sound
 }
 
 export class AudioManager {
@@ -341,6 +358,7 @@ export class AudioManager {
     const urls: string[] = [
       ALERT_FILE,
       'death-growl.mp3',
+      'notice.mp3',
       ...(soundConfig.enemyLoop ? [soundConfig.enemyLoop.file] : []),
       ...IDLE_FILES,
       ...CHASING_FILES,
@@ -368,7 +386,7 @@ export class AudioManager {
   private enemyReverbBus!: GainNode; // shared reverb bus for per-enemy distance reverb
   private shared: SharedBuffers = {
     searchingBuf: null, chasingBuf: null, alertBuf: null, deathGrowlBuf: null,
-    idleMp3s: [], chasingMp3s: [], jumpscareMp3s: [], ambienceBufs: [], chainsBuf: null,
+    idleMp3s: [], chasingMp3s: [], jumpscareMp3s: [], ambienceBufs: [], chainsBuf: null, noticeBuf: null,
   };
   private channels: Map<number, EnemyChannel> = new Map();
   private nextChannelId = 0;
@@ -497,9 +515,10 @@ export class AudioManager {
     // Ambience files from config (filter out undefined floors)
     const ambienceFiles = soundConfig.floorAmbience.map(a => a?.file);
 
-    const [alertBuf, deathGrowlBuf, chainsBuf, ...rest] = await Promise.all([
+    const [alertBuf, deathGrowlBuf, noticeBuf, chainsBuf, ...rest] = await Promise.all([
       load(ALERT_FILE),
       load('death-growl.mp3'),
+      load('notice.mp3'),
       soundConfig.enemyLoop ? load(soundConfig.enemyLoop.file) : Promise.resolve(null),
       ...IDLE_FILES.map(f => load(f)),
       ...CHASING_FILES.map(f => load(f)),
@@ -508,6 +527,7 @@ export class AudioManager {
     ]);
     this.shared.alertBuf      = alertBuf;
     this.shared.deathGrowlBuf = deathGrowlBuf;
+    this.shared.noticeBuf     = noticeBuf;
     this.shared.chainsBuf     = chainsBuf;
 
     const idleEnd = IDLE_FILES.length;
@@ -582,6 +602,11 @@ export class AudioManager {
   /** Update playback rate of the chains loop for a channel (1.0 = normal, >1 = faster) */
   setChannelChainsRate(id: number, rate: number) {
     this.channels.get(id)?.setChainsRate(rate);
+  }
+
+  /** Play the notice sound for a channel (first detection stab) */
+  playChannelNotice(id: number) {
+    this.channels.get(id)?.playNotice(this.shared.noticeBuf);
   }
 
   /** Stop all enemy channels */
