@@ -319,6 +319,39 @@ interface SharedBuffers {
 }
 
 export class AudioManager {
+  // ── Static preload cache (persists across restarts) ───────────────────────
+  private static _preloadCache = new Map<string, ArrayBuffer>();
+  private static _preloadPromise: Promise<void> | null = null;
+
+  /** Fetch all audio file bytes upfront — no AudioContext needed, safe to call on page load.
+   *  loadMp3Buffers() will use these cached bytes (decode only, no fetch). */
+  static preload(): Promise<void> {
+    if (AudioManager._preloadPromise) return AudioManager._preloadPromise;
+
+    const urls: string[] = [
+      ALERT_FILE,
+      'death-growl.mp3',
+      ...(soundConfig.enemyLoop ? [soundConfig.enemyLoop.file] : []),
+      ...IDLE_FILES,
+      ...CHASING_FILES,
+      ...soundConfig.jumpscares,
+      ...soundConfig.floorAmbience
+        .filter((a): a is NonNullable<typeof a> => !!a)
+        .map(a => a.file),
+    ];
+
+    AudioManager._preloadPromise = Promise.all(
+      urls.map(url =>
+        fetch(url)
+          .then(r => r.arrayBuffer())
+          .then(ab => { AudioManager._preloadCache.set(url, ab); })
+          .catch(() => {})
+      )
+    ).then(() => {});
+
+    return AudioManager._preloadPromise;
+  }
+
   private ctx: AudioContext | null = null;
   private masterGain!: GainNode;
   private reverbSend!: GainNode;
@@ -442,8 +475,9 @@ export class AudioManager {
     if (!this.ctx) return;
     const load = async (url: string): Promise<AudioBuffer | null> => {
       try {
-        const resp = await fetch(url);
-        const ab   = await resp.arrayBuffer();
+        const cached = AudioManager._preloadCache.get(url);
+        // slice(0) clones the buffer — decodeAudioData detaches the original
+        const ab = cached ? cached.slice(0) : await (await fetch(url)).arrayBuffer();
         return await this.ctx!.decodeAudioData(ab);
       } catch (e) {
         console.warn(`Failed to load audio: ${url}`, e);

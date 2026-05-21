@@ -1,5 +1,6 @@
 import { Game } from './Game';
 import { inputMode } from './InputMode';
+import { AudioManager } from './AudioManager';
 
 const container = document.getElementById('canvas-container')!;
 const overlay   = document.getElementById('overlay')!;
@@ -8,6 +9,24 @@ const hud       = document.getElementById('hud')!;
 const blackout  = document.getElementById('blackout')!;
 
 let game: Game | null = null;
+
+// ── Preload all assets immediately (no user gesture needed for fetch/XHR) ──
+const PRELOAD_TEXTURES = [
+  'item-key.png', 'item-map.png', 'item-compass.png',
+  'enemy-front.png', 'enemy-back.png', 'enemy-side.png',
+  'basement-wall.png', 'basement-floor.png', 'basement-ceiling.png',
+  'home-wall.png', 'home-floor.png', 'home-ceiling.png',
+  'village-wall.png', 'vilage-floor.png',
+];
+
+const preloadPromise = Promise.all([
+  AudioManager.preload(),
+  ...PRELOAD_TEXTURES.map(url => new Promise<void>(resolve => {
+    const img = new Image();
+    img.onload = img.onerror = () => resolve();
+    img.src = url;
+  })),
+]).then(() => {});
 
 // Install input-mode detection early so first touch/mouse is caught
 inputMode.install();
@@ -35,24 +54,26 @@ startBtn.addEventListener('click', () => {
   overlay.classList.remove('ready');
 
   setTimeout(() => {
-    // Screen is black — hide overlay, start game (audio begins)
+    // Screen is black — wait for preload then start game (audio begins)
     overlay.style.display = 'none';
     hud.style.display = 'block';
 
-    if (game) {
-      game.restart();
-    } else {
-      game = new Game(container);
-      game.start();
-    }
+    preloadPromise.then(() => {
+      if (game) {
+        game.restart();
+      } else {
+        game = new Game(container);
+        game.start();
+      }
 
-    if (!inputMode.isTouch) document.body.requestPointerLock();
+      if (!inputMode.isTouch) document.body.requestPointerLock();
 
-    // After 1s in black, fade the scene in over 1.5s (audio was already playing)
-    setTimeout(() => {
-      blackout.style.transition = 'opacity 1.5s ease-in';
-      blackout.style.opacity = '0';
-    }, 1000);
+      // After 1s in black, fade the scene in over 1.5s (audio was already playing)
+      setTimeout(() => {
+        blackout.style.transition = 'opacity 1.5s ease-in';
+        blackout.style.opacity = '0';
+      }, 1000);
+    });
   }, 500);
 });
 
