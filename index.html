@@ -415,12 +415,18 @@
     </div><!-- /ui-root -->
   </div>
   <script>
-    // Scale the 1920×1080 UI root to fill the viewport (letterbox/pillarbox).
-    // The overlay's box-shadow covers background gaps on non-16:9 screens.
+    // Scale the UI root to fill the viewport (letterbox/pillarbox).
+    // High-DPR devices with a small CSS viewport (phones/small tablets) get a
+    // 960×540 design space instead of 1920×1080, so UI elements appear larger.
     (function () {
-      const UI_W = 1920, UI_H = 1080;
       const root = document.getElementById('ui-root');
       function scaleUI() {
+        const dpr = window.devicePixelRatio || 1;
+        const smallScreen = dpr >= 2 && Math.min(window.innerWidth, window.innerHeight) < 600;
+        const UI_W = smallScreen ? 960 : 1920;
+        const UI_H = smallScreen ? 540 : 1080;
+        root.style.width  = UI_W + 'px';
+        root.style.height = UI_H + 'px';
         const scale = Math.min(window.innerWidth / UI_W, window.innerHeight / UI_H);
         const ox = (window.innerWidth  - UI_W * scale) / 2;
         const oy = (window.innerHeight - UI_H * scale) / 2;

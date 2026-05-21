@@ -63,6 +63,7 @@ export class Enemy {
   // Investigation state
   private investigateTimer = 0;
   private investigateTarget: THREE.Vector3 | null = null;
+  private investigateWaiting = false; // true while standing still waiting for suspicion to decay
 
   // Stuck detection
   private stuckCheckTimer = 0;
@@ -244,6 +245,7 @@ export class Enemy {
     this.lastKnownPlayerPos = targetPos.clone();
     // Go to alert position first, then investigate nearby
     this.reachedLastKnown = false;
+    this.investigateWaiting = false;
     this.investigateTarget = targetPos.clone();
     this.searchTarget = this.investigateTarget;
     this.path = this.smoothPath(this.bfsPath(this.pos, this.investigateTarget, true));
@@ -294,6 +296,7 @@ export class Enemy {
           this.path = this.smoothPath(this.bfsPath(this.pos, wp));
           this.searchTimer = 12;
           this.investigateTimer = 0; // cancel investigation if stuck
+          this.investigateWaiting = false;
         }
       }
       this.stuckCheckPos.copy(this.pos);
@@ -378,12 +381,19 @@ export class Enemy {
           const glowTimer = inGlowOnly ? 4 + playerVisibility * 4 : 0;
           this.investigateTimer = Math.max(this.investigateTimer, canSee ? 8 : canHear ? 6 + playerNoise * 4 : glowTimer);
           this.reachedLastKnown = false;
+          this.investigateWaiting = false; // new stimulus cancels any current wait
         }
         // Move: investigate or patrol
         if (this.investigateTimer > 0) {
           this.investigateTimer -= dt;
+          // End wait early once suspicion has fully decayed
+          if (this.investigateWaiting && this.suspicion < 0.05) {
+            this.investigateWaiting = false;
+            this.investigateTimer = 0;
+          }
           this.doInvestigate(dt, speedMult);
         } else {
+          this.investigateWaiting = false;
           this.doSearch(dt, speedMult);
         }
         break;
@@ -403,6 +413,7 @@ export class Enemy {
           this.state = EnemyState.SEARCHING;
           this.suspicion = SUSPICION_ON_LOST; // remain highly alert after losing chase
           this.reachedLastKnown = false;
+          this.investigateWaiting = false;
           this.investigateTarget = (this.lastKnownPlayerPos ?? playerPos).clone();
           this.searchTarget = this.investigateTarget;
           this.path = this.smoothPath(this.bfsPath(this.pos, this.investigateTarget, true));
@@ -570,17 +581,19 @@ export class Enemy {
       return;
     }
 
+    // Waiting at the investigation point — don't move until suspicion decays
+    if (this.investigateWaiting) return;
+
     // Reached current target or path exhausted — pick next step
     if (this.path.length === 0 || this.pos.distanceTo(this.investigateTarget) < 1.5) {
       if (!this.reachedLastKnown && this.lastKnownPlayerPos) {
-        // First: go to last known player position
+        // Arrived at the last known position — stop and listen until suspicion decays
         this.reachedLastKnown = true;
-        // Now search the area around it
-        this.investigateTarget = this.pickInvestigatePoint(this.lastKnownPlayerPos);
-        this.searchTarget = this.investigateTarget;
-        this.path = this.smoothPath(this.bfsPath(this.pos, this.investigateTarget, true));
+        this.investigateWaiting = true;
+        this.path = [];
+        return;
       } else if (this.lastKnownPlayerPos) {
-        // Already reached last known — wander nearby
+        // Done waiting — wander the area briefly before returning to patrol
         this.investigateTarget = this.pickInvestigatePoint(this.lastKnownPlayerPos);
         this.searchTarget = this.investigateTarget;
         this.path = this.smoothPath(this.bfsPath(this.pos, this.investigateTarget, true));
