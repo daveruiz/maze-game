@@ -33,6 +33,7 @@ class EnemyChannel {
 
   // Constant chains loop (independent of state)
   private chainsLoop: AudioBufferSourceNode | null = null;
+  private targetChainsRate = 1.0;
 
   // MP3 one-shot
   private oneShot: AudioBufferSourceNode | null = null;
@@ -191,14 +192,23 @@ class EnemyChannel {
     const src = this.ctx.createBufferSource();
     src.buffer = buf;
     src.loop = true;
-    // Random start offset so enemies don't sync
     src.loopStart = 0;
     src.loopEnd = buf.duration;
+    src.playbackRate.value = this.targetChainsRate;
     const g = this.ctx.createGain();
     g.gain.value = volume;
     src.connect(g).connect(this.panner);
     src.start(0, Math.random() * buf.duration);
     this.chainsLoop = src;
+  }
+
+  /** Smoothly update the chains loop playback rate (1.0 = normal, >1 = faster/urgent) */
+  setChainsRate(rate: number) {
+    this.targetChainsRate = rate;
+    if (this.chainsLoop) {
+      this.chainsLoop.playbackRate.cancelScheduledValues(this.ctx.currentTime);
+      this.chainsLoop.playbackRate.setTargetAtTime(rate, this.ctx.currentTime, 0.15);
+    }
   }
 
   stop() {
@@ -567,6 +577,11 @@ export class AudioManager {
   startChannelChains(id: number) {
     if (!this.shared.chainsBuf || !soundConfig.enemyLoop) return;
     this.channels.get(id)?.startChainsLoop(this.shared.chainsBuf, soundConfig.enemyLoop.volume);
+  }
+
+  /** Update playback rate of the chains loop for a channel (1.0 = normal, >1 = faster) */
+  setChannelChainsRate(id: number, rate: number) {
+    this.channels.get(id)?.setChainsRate(rate);
   }
 
   /** Stop all enemy channels */

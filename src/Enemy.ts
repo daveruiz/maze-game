@@ -28,6 +28,13 @@ const INVESTIGATE_RADIUS   = 8;   // pick cells within this radius of last known
 // Alert system
 const ALERT_RANGE = 30; // world units — other enemies within this get alerted
 
+// Suspicion system
+const SUSPICION_DECAY       = 0.04;  // per second — idle cooldown rate
+const SUSPICION_BUILD_SIGHT = 0.30;  // per second from visible flashlight (beyond direct sight)
+const SUSPICION_BUILD_NOISE = 0.50;  // per second at playerNoise=1.0, scaled by noise level
+const SUSPICION_ON_LOST     = 0.75;  // suspicion reset value when enemy loses player from chase
+const SUSPICION_ON_ALERT    = 0.50;  // suspicion boost when alerted by a sibling
+
 // Sound occlusion — recomputed every ~1s, not every frame
 const SOUND_OCCLUSION_INTERVAL = 0.8; // seconds between BFS recalculations
 
@@ -41,6 +48,7 @@ export class Enemy {
   state: EnemyState = EnemyState.SEARCHING;
   floorIndex: number = 0;
   homeFloor: number = 0;
+  suspicion = 0;  // 0–1: scales walk speed and chains rate
 
   private pos: THREE.Vector3 = new THREE.Vector3();
   private path: THREE.Vector3[] = [];
@@ -229,6 +237,7 @@ export class Enemy {
   /** Alert this enemy to investigate a position (called by siblings) */
   alertTo(targetPos: THREE.Vector3) {
     if (this.state === EnemyState.CHASING) return; // already chasing, ignore
+    this.suspicion = Math.max(this.suspicion, SUSPICION_ON_ALERT);
     this.state = EnemyState.SEARCHING;
     this.lastKnownPlayerPos = targetPos.clone();
     // Go to alert position first, then investigate nearby
@@ -252,6 +261,9 @@ export class Enemy {
     }
     this.mesh.visible = true;
     this.audio.startChannelChains(this.channelId);
+    // Chains rate: 1.0 (calm patrol) → 1.4 (full chase) driven by suspicion/chase state
+    const alertLevel = this.state === EnemyState.CHASING ? 1.0 : this.suspicion;
+    this.audio.setChannelChainsRate(this.channelId, 1.0 + alertLevel * 0.4);
 
     const speedMult = 1 + this.floorIndex * SPEED_SCALE_PER_FLOOR;
 
@@ -303,13 +315,36 @@ export class Enemy {
     const DARK_MAX_RANGE = 19;   // loud noise (landing)
     const darkRange = DARK_MIN_RANGE + playerNoise * (DARK_MAX_RANGE - DARK_MIN_RANGE);
     const effectiveSight = flashlightOn ? SIGHT_RANGE : darkRange;
-    const canSee = this.hasLineOfSight(playerPos) && distToPlayer < effectiveSight;
+    const hasLoS = this.hasLineOfSight(playerPos);
+    const canSee = hasLoS && distToPlayer < effectiveSight;
+    // Flashlight glow visible slightly beyond direct sight range — builds suspicion
+    const flashlightVisible = flashlightOn && hasLoS && distToPlayer < SIGHT_RANGE * 1.5;
 
     // Hearing: split into close (triggers chase) and far (investigate only)
     const HEAR_CHASE_RANGE = 5;  // within 5 units — close enough to trigger chase
     const canHear = !flashlightOn && playerNoise > 0.1 && distToPlayer < darkRange;
     const canHearClose = canHear && distToPlayer < HEAR_CHASE_RANGE;
     const canHearFar = canHear && !canHearClose;
+
+    // ── Suspicion update (only while searching — chasing uses its own FSM) ───
+    if (this.state === EnemyState.SEARCHING) {
+      let gain = 0;
+      if (flashlightVisible) gain += SUSPICION_BUILD_SIGHT;
+      if (canHear)           gain += SUSPICION_BUILD_NOISE * playerNoise;
+      if (gain > 0) {
+        this.suspicion = Math.min(1, this.suspicion + gain * dt);
+      } else {
+        this.suspicion = Math.max(0, this.suspicion - SUSPICION_DECAY * dt);
+      }
+      // Suspicion maxed — trigger chase even without direct contact
+      if (this.suspicion >= 1.0 && !(canSee || canHearClose)) {
+        this.state = EnemyState.SPOTTED;
+        this.lastKnownPlayerPos = playerPos.clone();
+        this.audio.playChannelState(this.channelId, 'spotted');
+        this.alertSiblings(playerPos);
+        console.debug(`[Enemy z${this.patrolZone} f${this.floorIndex}] MAX SUSPICION — SPOTTED`);
+      }
+    }
 
     // ── FSM ──────────────────────────────────────────────────────────────
     switch (this.state) {
@@ -359,6 +394,7 @@ export class Enemy {
           console.debug(`[Enemy z${this.patrolZone} f${this.floorIndex}] LOST player at dist ${distToPlayer.toFixed(1)}`);
           // Lost the player — go to last known position, then investigate the area
           this.state = EnemyState.SEARCHING;
+          this.suspicion = SUSPICION_ON_LOST; // remain highly alert after losing chase
           this.reachedLastKnown = false;
           this.investigateTarget = (this.lastKnownPlayerPos ?? playerPos).clone();
           this.searchTarget = this.investigateTarget;
@@ -635,7 +671,8 @@ export class Enemy {
 
     if (this.path.length > 0) {
       const next = this.path[0];
-      const d = this.moveToward(next, BASE_CHASE_SPEED * 0.7 * speedMult * dt);
+      const invSpeed = BASE_SEARCH_SPEED + (BASE_CHASE_SPEED - BASE_SEARCH_SPEED) * this.suspicion;
+      const d = this.moveToward(next, invSpeed * speedMult * dt);
       if (d < 0.4) this.path.shift();
     }
   }
@@ -708,7 +745,8 @@ export class Enemy {
 
     if (this.path.length > 0) {
       const next = this.path[0];
-      const d = this.moveToward(next, BASE_SEARCH_SPEED * speedMult * dt);
+      const speed = BASE_SEARCH_SPEED + (BASE_CHASE_SPEED - BASE_SEARCH_SPEED) * this.suspicion;
+      const d = this.moveToward(next, speed * speedMult * dt);
       if (d < 0.4) this.path.shift();
     }
   }
@@ -761,7 +799,8 @@ export class Enemy {
 
     if (this.path.length > 0) {
       const next = this.path[0];
-      const d = this.moveToward(next, BASE_SEARCH_SPEED * speedMult * dt);
+      const speed = BASE_SEARCH_SPEED + (BASE_CHASE_SPEED - BASE_SEARCH_SPEED) * this.suspicion;
+      const d = this.moveToward(next, speed * speedMult * dt);
       if (d < 0.4) this.path.shift();
     }
   }
