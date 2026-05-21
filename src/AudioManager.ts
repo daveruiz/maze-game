@@ -523,6 +523,7 @@ export class AudioManager {
   }
 
   resume() { this.ctx?.resume(); }
+  suspend() { this.ctx?.suspend(); }
 
   /** Create a new audio channel for an enemy. Returns channel ID. */
   createChannel(): number {

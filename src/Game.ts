@@ -1097,6 +1097,21 @@ export class Game {
 
   deactivateGamepad() { this.gamepad.deactivate(); }
 
+  pauseGame() {
+    if (!this.running) return;
+    this.running = false;
+    cancelAnimationFrame(this.raf);
+    this.audio.suspend();
+  }
+
+  resumeGame() {
+    if (this.running) return;
+    this.running = true;
+    this.audio.resume();
+    this.clock.start();
+    this.loop();
+  }
+
   restart() {
     this.audio.stopAll();
     this.mazeRenderer.dispose(this.scene);

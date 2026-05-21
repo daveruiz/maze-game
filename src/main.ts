@@ -139,6 +139,19 @@ container.addEventListener('click', (e) => {
   }
 });
 
+// Pause game when fullscreen exits on touch/mobile devices
+const onFullscreenChange = () => {
+  if (!game || !inputMode.isTouch) return;
+  const isFS = !!(document.fullscreenElement || (document as any).webkitFullscreenElement);
+  if (!isFS) {
+    game.pauseGame();
+  } else {
+    game.resumeGame();
+  }
+};
+document.addEventListener('fullscreenchange', onFullscreenChange);
+document.addEventListener('webkitfullscreenchange', onFullscreenChange);
+
 // Gamepad: poll for A or Start button press to click start/restart when overlay is visible
 let gpPrevConfirm = false;
 function pollGamepadForMenu() {
