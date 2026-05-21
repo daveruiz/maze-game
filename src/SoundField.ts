@@ -13,9 +13,10 @@ export interface SoundFieldResult {
 const MAX_COST     = 80;   // hard propagation cap; cells beyond this are silent
 const ENERGY_DECAY = 0.10; // energy(cost) = exp(-cost * DECAY)
 
-// Direction gradient sampling radius (open steps from the player's cell).
-// 1 = only cardinal neighbours; 2+ captures corners for smooth diagonal angles.
-const DIRECTION_SAMPLE_DEPTH = 4;
+// Direction gradient sampling radius (cells). Arrival direction is computed
+// from every cell within this radius that has clear line-of-sight from the
+// player's cell — cells fully hidden behind a wall are excluded.
+const DIRECTION_SAMPLE_RADIUS = 6;
 
 /**
  * Flood-fill sound energy from a source cell (enemy) through the maze grid
@@ -71,6 +72,35 @@ function buildCostMap(floor: MazeFloor, srcX: number, srcZ: number): Float32Arra
   return cost;
 }
 
+/** Grid line-of-sight between two cell centres: true if the straight segment
+ *  crosses no wall. Steps finely and checks wall bits on each cell transition. */
+function cellHasLOS(
+  floor: MazeFloor,
+  ax: number, az: number,
+  bx: number, bz: number,
+): boolean {
+  const dx = bx - ax, dz = bz - az;
+  const dist = Math.sqrt(dx * dx + dz * dz);
+  if (dist < 0.5) return true;
+  const steps = Math.ceil(dist * 4); // ~0.25-cell stepping
+  let cx = ax, cz = az;
+  for (let i = 1; i <= steps; i++) {
+    const t = i / steps;
+    const nx = Math.round(ax + dx * t);
+    const nz = Math.round(az + dz * t);
+    if (nx === cx && nz === cz) continue;
+    const cur = floor.cells[cz]?.[cx];
+    const nxt = floor.cells[nz]?.[nx];
+    if (!cur || !nxt) return false;
+    if (nx > cx && (cur.walls.E || nxt.walls.W)) return false;
+    if (nx < cx && (cur.walls.W || nxt.walls.E)) return false;
+    if (nz > cz && (cur.walls.S || nxt.walls.N)) return false;
+    if (nz < cz && (cur.walls.N || nxt.walls.S)) return false;
+    cx = nx; cz = nz;
+  }
+  return true;
+}
+
 /**
  * Returns a Float32Array[W*H] with energy values 0–1 for every cell.
  * energy[z*W+x] = exp(-cost * ENERGY_DECAY), 0 when unreachable.
@@ -110,45 +140,29 @@ export function computeSoundField(
   const pc     = cost[pi];
   const energy = pc > MAX_COST ? 0 : Math.exp(-pc * ENERGY_DECAY);
 
-  // Cost-gradient arrival direction — BFS over a 2-cell open neighbourhood.
-  // A plain 4-neighbour gradient can only resolve the 4 cardinal directions;
-  // expanding the sample to every cell reachable within DIRECTION_SAMPLE_DEPTH
-  // open steps captures corners and produces smooth diagonal directions. The
-  // BFS only crosses open passages, so walls are always respected — sound is
-  // never pulled toward a low-cost cell sitting behind a wall.
-  // Each upstream cell contributes unit_offset * cost_drop; the vector-sum
-  // magnitude relative to the total drop is the directionality confidence.
+  // Cost-gradient arrival direction — sampled over directly-visible cells.
+  // Every cell within DIRECTION_SAMPLE_RADIUS that has clear line-of-sight
+  // from the player's cell contributes unit_offset * cost_drop. Cells fully
+  // hidden behind a wall are excluded: sound from them bends around corners,
+  // so their straight-line grid offset doesn't represent the true arrival
+  // direction. The cost_drop (player_cost - cell_cost) is positive only for
+  // upstream cells; the vector-sum magnitude relative to the total drop is
+  // the directionality confidence.
   let sumX = 0, sumZ = 0, totalDrop = 0;
-  {
-    const seen = new Set<number>([pi]);
-    let frontier: [number, number][] = [[playerX, playerZ]];
-    for (let depth = 0; depth < DIRECTION_SAMPLE_DEPTH; depth++) {
-      const next: [number, number][] = [];
-      for (const [x, z] of frontier) {
-        const cell = floor.cells[z]?.[x];
-        if (!cell) continue;
-        const moves: [number, number, boolean][] = [
-          [x,   z-1, cell.walls.N || !!(floor.cells[z-1]?.[x]?.walls.S)],
-          [x,   z+1, cell.walls.S || !!(floor.cells[z+1]?.[x]?.walls.N)],
-          [x+1, z,   cell.walls.E || !!(floor.cells[z]?.[x+1]?.walls.W)],
-          [x-1, z,   cell.walls.W || !!(floor.cells[z]?.[x-1]?.walls.E)],
-        ];
-        for (const [nx, nz, hasWall] of moves) {
-          if (hasWall || nx < 0 || nx >= W || nz < 0 || nz >= H) continue;
-          const ni = idx(nx, nz);
-          if (seen.has(ni)) continue;
-          seen.add(ni);
-          next.push([nx, nz]);
-          const drop = Math.max(0, pc - cost[ni]);
-          if (drop <= 0) continue;
-          const ox = nx - playerX, oz = nz - playerZ;
-          const olen = Math.sqrt(ox * ox + oz * oz) || 1;
-          sumX      += (ox / olen) * drop;
-          sumZ      += (oz / olen) * drop;
-          totalDrop += drop;
-        }
-      }
-      frontier = next;
+  const R = DIRECTION_SAMPLE_RADIUS;
+  for (let oz = -R; oz <= R; oz++) {
+    for (let ox = -R; ox <= R; ox++) {
+      if (ox === 0 && oz === 0) continue;
+      if (ox * ox + oz * oz > R * R) continue; // circular radius
+      const nx = playerX + ox, nz = playerZ + oz;
+      if (nx < 0 || nx >= W || nz < 0 || nz >= H) continue;
+      const drop = Math.max(0, pc - cost[idx(nx, nz)]);
+      if (drop <= 0) continue; // not upstream toward the source
+      if (!cellHasLOS(floor, playerX, playerZ, nx, nz)) continue; // hidden by a wall
+      const olen = Math.sqrt(ox * ox + oz * oz);
+      sumX      += (ox / olen) * drop;
+      sumZ      += (oz / olen) * drop;
+      totalDrop += drop;
     }
   }
 
