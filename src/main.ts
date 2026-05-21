@@ -5,6 +5,7 @@ const container = document.getElementById('canvas-container')!;
 const overlay   = document.getElementById('overlay')!;
 const startBtn  = document.getElementById('start-btn')!;
 const hud       = document.getElementById('hud')!;
+const blackout  = document.getElementById('blackout')!;
 
 let game: Game | null = null;
 
@@ -27,18 +28,32 @@ inputMode.onChange((mode) => {
 });
 
 startBtn.addEventListener('click', () => {
-  overlay.style.display = 'none';
-  hud.style.display = 'block';
+  // Snap blackout to fully opaque behind the overlay (no transition)
+  blackout.style.transition = 'none';
+  blackout.style.opacity = '1';
+  // Fade the overlay out (0.5s via CSS transition)
+  overlay.classList.remove('ready');
 
-  if (game) {
-    game.restart();
-  } else {
-    game = new Game(container);
-    game.start();
-  }
+  setTimeout(() => {
+    // Screen is black — hide overlay, start game (audio begins)
+    overlay.style.display = 'none';
+    hud.style.display = 'block';
 
-  // Lock pointer immediately on start/restart (mouse mode only)
-  if (!inputMode.isTouch) document.body.requestPointerLock();
+    if (game) {
+      game.restart();
+    } else {
+      game = new Game(container);
+      game.start();
+    }
+
+    if (!inputMode.isTouch) document.body.requestPointerLock();
+
+    // After 1s in black, fade the scene in over 1.5s (audio was already playing)
+    setTimeout(() => {
+      blackout.style.transition = 'opacity 1.5s ease-in';
+      blackout.style.opacity = '0';
+    }, 1000);
+  }, 500);
 });
 
 // Mouse mode: click on canvas re-acquires pointer lock (but not on UI elements)

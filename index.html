@@ -91,10 +91,19 @@
       pointer-events: all;
       z-index: 10;
       opacity: 0;
-      transition: opacity 0.8s ease-in;
+      transition: opacity 0.5s ease;
     }
     #overlay.ready {
       opacity: 1;
+    }
+    #blackout {
+      position: absolute;
+      top: 0; left: 0;
+      width: 100%; height: 100%;
+      background: #000;
+      opacity: 0;
+      pointer-events: none;
+      z-index: 8;
     }
     #overlay h1 {
       font-size: 7rem;
@@ -268,7 +277,7 @@
       padding-top: 8px;
     }
     /* ── Mobile responsive overrides ─────────────── */
-    @media (max-width: 480px) {
+    @media (max-width: 768px) {
       #overlay h1 {
         font-size: clamp(2.4rem, 10vw, 5rem);
         letter-spacing: 4px;
@@ -293,6 +302,7 @@
 </head>
 <body>
   <div id="canvas-container">
+    <div id="blackout"></div>
     <div id="hud" style="display:none;">
       <div id="crosshair"></div>
       <div id="info-panel">

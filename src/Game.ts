@@ -1080,9 +1080,18 @@ export class Game {
     this.debugMenuOpen = false;
     document.getElementById('debug-menu')!.style.display = 'none';
     setTimeout(() => {
+      // Reset blackout in case the fade-in was still in progress
+      const blackout = document.getElementById('blackout')!;
+      blackout.style.transition = 'none';
+      blackout.style.opacity = '0';
+
       const overlay = document.getElementById('overlay')!;
       document.getElementById('start-btn')!.textContent = 'RETRY';
       overlay.style.display = 'flex';
+      // Double-rAF ensures display:flex is painted before transitioning opacity
+      requestAnimationFrame(() => requestAnimationFrame(() => {
+        overlay.classList.add('ready');
+      }));
     }, 2500);
   }
 
