@@ -418,14 +418,14 @@
   <script>
     // Scale the UI root to fill the viewport (letterbox/pillarbox).
     // High-DPR devices with a small CSS viewport (phones/small tablets) get a
-    // 960×540 design space instead of 1920×1080, so UI elements appear larger.
+    // 1280×720 design space instead of 1920×1080, so UI elements appear 1.5× larger.
     (function () {
       const root = document.getElementById('ui-root');
       function scaleUI() {
         const dpr = window.devicePixelRatio || 1;
         const smallScreen = dpr >= 2 && Math.min(window.innerWidth, window.innerHeight) < 600;
-        const UI_W = smallScreen ? 960 : 1920;
-        const UI_H = smallScreen ? 540 : 1080;
+        const UI_W = smallScreen ? 1280 : 1920;
+        const UI_H = smallScreen ? 720  : 1080;
         root.style.width  = UI_W + 'px';
         root.style.height = UI_H + 'px';
         const scale = Math.min(window.innerWidth / UI_W, window.innerHeight / UI_H);
