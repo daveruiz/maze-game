@@ -615,13 +615,7 @@ export class AudioManager {
     if (level > this._playerAudibility) this._playerAudibility = level;
   }
 
-  /** Register a sound at a direct 0..1 audibility level (bypasses AUDIBILITY_SCALE). */
-  private reportPlayerAudibility(level: number) {
-    const clamped = Math.min(1, Math.max(0, level));
-    if (clamped > this._playerAudibility) this._playerAudibility = clamped;
-  }
-
-  /** Decay audibility toward zero — call once per frame. */
+/** Decay audibility toward zero — call once per frame. */
   tickAudibility(dt: number) {
     const DECAY = 2.0; // units/s — sprint stays elevated between steps; walk pulses clearly
     this._playerAudibility = Math.max(0, this._playerAudibility - DECAY * dt);
@@ -666,13 +660,11 @@ export class AudioManager {
   updateFootsteps(dt: number, speed: number, maxSpeed: number, onGround: boolean, justLanded: boolean, landingImpact = 0, crouching = false) {
     if (!this.ctx || !this.footstepBuf) return;
 
-    // Landing thump — always plays (even crouching, you still land)
+    // Landing thump — volume proportional to fall speed so obstacle drops (~6.4 u/s)
+    // are naturally quieter than full jumps (~9 u/s) or hard falls (~12+ u/s)
     if (justLanded && landingImpact > 1) {
-      const t = Math.min(1, (landingImpact - 1) / 10);
-      const vol = 1.0 + t * 2.0;
-      this.playFootstep(1.0, vol, true); // audio unchanged; audibility reported separately
-      // Scale audibility directly to impact speed so obstacle drops (~6.4) < jumps (~9)
-      this.reportPlayerAudibility((landingImpact - 1) / 10);
+      const vol = Math.min(1.0, landingImpact / 12);
+      this.playFootstep(1.0, vol);
       this.footstepTimer = 0;
       return;
     }
@@ -694,7 +686,7 @@ export class AudioManager {
     }
   }
 
-  private playFootstep(speedT: number, volumeMult = 1.0, skipReport = false) {
+  private playFootstep(speedT: number, volumeMult = 1.0) {
     if (!this.ctx || !this.footstepBuf) return;
 
     const src = this.ctx.createBufferSource();
@@ -714,7 +706,7 @@ export class AudioManager {
     const gain = this.ctx.createGain();
     const gainValue = (0.02 + speedT * 0.14) * volumeMult; // 0.02 walk → 0.16 sprint
     gain.gain.value = gainValue;
-    if (!skipReport) this.reportPlayerSound(gainValue);
+    this.reportPlayerSound(gainValue);
 
     src.connect(gain).connect(panner).connect(this.masterGain);
     src.start();
