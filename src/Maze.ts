@@ -1079,8 +1079,7 @@ export class MazeRenderer {
 
   /** Show only the given floor, hide all others */
   setFloorVisible(activeFloor: number) {
-    // Geometry is always visible (no culling — all floors rendered)
-    // Only switch which floor's ambient lights are active
+    this.groups.forEach((g, i) => { g.visible = (i === activeFloor); });
     this.floorLights.forEach((lights, i) => {
       const vis = (i === activeFloor);
       lights.forEach(l => { l.visible = vis; });

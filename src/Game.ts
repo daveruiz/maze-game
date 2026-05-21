@@ -108,7 +108,7 @@ export class Game {
     container.appendChild(this.renderer.domElement);
 
     // Camera
-    this.camera = new THREE.PerspectiveCamera(75, window.innerWidth / window.innerHeight, 0.05, 80);
+    this.camera = new THREE.PerspectiveCamera(75, window.innerWidth / window.innerHeight, 0.05, 1000);
 
     // Scene — camera must be added for spotlight target to work
     this.scene = new THREE.Scene();
