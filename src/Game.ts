@@ -802,7 +802,6 @@ export class Game {
       const fillColor = pct >= 80 ? '#f44' : pct >= 40 ? '#fa4' : '#4af';
       const iconColor =
         e.state === EnemyState.CHASING ? '#f44' :
-        e.state === EnemyState.SPOTTED ? '#f80' :
         e.suspicion > 0.6             ? '#fa4' : '#888';
       html += `<div class="hud-bar">` +
         `<span class="hud-bar-icon" style="color:${iconColor}">E${i}</span>` +

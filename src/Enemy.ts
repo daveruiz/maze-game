@@ -7,7 +7,6 @@ const BASE_SEARCH_SPEED = 2.5;
 const BASE_CHASE_SPEED  = 5.0;
 const SPEED_SCALE_PER_FLOOR = 0.10; // +10% per floor
 const SIGHT_RANGE       = 14;   // world units (flashlight on)
-const SIGHT_RANGE_DARK  = 4;    // world units (flashlight off — very short)
 const LOSE_RANGE        = 20;   // enemy loses sight beyond this (flashlight on)
 const LOSE_RANGE_DARK   = 15;   // loses sight sooner in the dark
 const CATCH_DISTANCE    = 1.2;
@@ -56,11 +55,8 @@ export class Enemy {
   private pathTimer = 0;
   private searchTarget: THREE.Vector3 | null = null;
   private searchTimer = 0;
-  private spotCooldown = 0;
 
-  // For loss-of-sight tracking
   private lastKnownPlayerPos: THREE.Vector3 | null = null;
-  private lostTimer = 0;
 
   // Investigation state
   private investigateTimer = 0;
@@ -269,7 +265,6 @@ export class Enemy {
     const speedMult = 1 + this.floorIndex * SPEED_SCALE_PER_FLOOR;
 
     this.pathTimer += dt;
-    this.spotCooldown -= dt;
 
     // Stuck detection — covers searching + investigating (not chasing)
     this.stuckCheckTimer += dt;
@@ -321,11 +316,7 @@ export class Enemy {
     // Flashlight glow visible slightly beyond direct sight range — builds suspicion
     const flashlightVisible = flashlightOn && hasLoS && distToPlayer < SIGHT_RANGE * 1.5;
 
-    // Hearing: split into close (triggers chase) and far (investigate only)
-    const HEAR_CHASE_RANGE = 5;  // within 5 units — close enough to trigger chase
     const canHear = !flashlightOn && playerNoise > 0.1 && distToPlayer < darkRange;
-    const canHearClose = canHear && distToPlayer < HEAR_CHASE_RANGE;
-    const canHearFar = canHear && !canHearClose;
 
     // ── Suspicion update (only while searching — chasing uses its own FSM) ───
     if (this.state === EnemyState.SEARCHING) {
@@ -349,13 +340,12 @@ export class Enemy {
       } else {
         this.suspicion = Math.max(0, this.suspicion - SUSPICION_DECAY * dt);
       }
-      // Suspicion maxed — trigger chase even without direct contact
-      if (this.suspicion >= 1.0 && !(canSee || canHearClose)) {
-        this.state = EnemyState.SPOTTED;
+      if (this.suspicion >= 1.0) {
+        this.state = EnemyState.CHASING;
         this.lastKnownPlayerPos = playerPos.clone();
         this.audio.playChannelState(this.channelId, 'spotted');
         this.alertSiblings(playerPos);
-        console.debug(`[Enemy z${this.patrolZone} f${this.floorIndex}] MAX SUSPICION — SPOTTED`);
+        console.debug(`[Enemy z${this.patrolZone} f${this.floorIndex}] MAX SUSPICION → CHASING`);
       }
     }
 
@@ -384,18 +374,9 @@ export class Enemy {
         }
         break;
 
-      case EnemyState.SPOTTED:
-        this.spotCooldown = 0.6;
-        this.state = EnemyState.CHASING;
-        this.lastKnownPlayerPos = playerPos.clone();
-        break;
-
       case EnemyState.CHASING:
         this.audio.playChannelState(this.channelId, 'chasing');
-        if (canSee || canHearClose) {
-          this.lastKnownPlayerPos = playerPos.clone();
-        } else if (canHearFar) {
-          // Far sound while chasing — update last known but don't refresh chase lock
+        if (canSee || canHear) {
           this.lastKnownPlayerPos = playerPos.clone();
         }
 

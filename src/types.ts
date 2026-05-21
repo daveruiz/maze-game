@@ -37,7 +37,6 @@ export interface FloorTheme {
 
 export enum EnemyState {
   SEARCHING = 'SEARCHING',
-  SPOTTED   = 'SPOTTED',
   CHASING   = 'CHASING',
 }
 
