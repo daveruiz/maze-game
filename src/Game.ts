@@ -542,7 +542,7 @@ export class Game {
         }
       }
     }
-    this.playerVisibility = this.flashlightOn ? 1.0 : lanternExposure * 0.75;
+    this.playerVisibility = (this.flashlightOn || this.debugLight) ? 1.0 : lanternExposure * 0.75;
 
     // Audio listener + footsteps
     this.audio.setListenerPose(pp.x, pp.y, pp.z, fwd.x, fwd.y, fwd.z);

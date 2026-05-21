@@ -1,4 +1,5 @@
 import { Player } from './Player';
+import { inputMode } from './InputMode';
 
 // Standard gamepad mapping indices
 const AXIS_LX = 0;
@@ -37,6 +38,7 @@ export class GamepadManager {
   /** Call every frame — reads ALL connected gamepads and feeds the player. */
   update(): boolean {
     if (!this.player) return false;
+    if (inputMode.isTouch) return false; // touch controls take priority
 
     const gamepads = navigator.getGamepads?.() ?? [];
 
