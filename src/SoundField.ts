@@ -13,6 +13,10 @@ export interface SoundFieldResult {
 const MAX_COST     = 80;   // hard propagation cap; cells beyond this are silent
 const ENERGY_DECAY = 0.10; // energy(cost) = exp(-cost * DECAY)
 
+// Direction gradient sampling radius (open steps from the player's cell).
+// 1 = only cardinal neighbours; 2+ captures corners for smooth diagonal angles.
+const DIRECTION_SAMPLE_DEPTH = 2;
+
 /**
  * Flood-fill sound energy from a source cell (enemy) through the maze grid
  * using Dijkstra (Dial's algorithm) along open corridors only — walls are opaque.
@@ -106,29 +110,46 @@ export function computeSoundField(
   const pc     = cost[pi];
   const energy = pc > MAX_COST ? 0 : Math.exp(-pc * ENERGY_DECAY);
 
-  // Cost-gradient arrival direction — sampled through OPEN passages only.
-  // For each of the 4 neighbors, the "cost drop" (player_cost - neighbor_cost)
-  // is positive only when the neighbor is closer to the source (i.e. upstream).
-  // A neighbor behind a wall is skipped: sound can't physically arrive through
-  // it even if it has a low cost (its energy reached the player via some other
-  // corridor). Summing offset * cost_drop gives the gradient direction; its
-  // magnitude relative to the total positive drop is the directionality confidence.
+  // Cost-gradient arrival direction — BFS over a 2-cell open neighbourhood.
+  // A plain 4-neighbour gradient can only resolve the 4 cardinal directions;
+  // expanding the sample to every cell reachable within DIRECTION_SAMPLE_DEPTH
+  // open steps captures corners and produces smooth diagonal directions. The
+  // BFS only crosses open passages, so walls are always respected — sound is
+  // never pulled toward a low-cost cell sitting behind a wall.
+  // Each upstream cell contributes unit_offset * cost_drop; the vector-sum
+  // magnitude relative to the total drop is the directionality confidence.
   let sumX = 0, sumZ = 0, totalDrop = 0;
-  const pCell = floor.cells[playerZ]?.[playerX];
-  const dirs: [number, number, boolean][] = [
-    [0, -1, !!pCell?.walls.N || !!(floor.cells[playerZ-1]?.[playerX]?.walls.S)],
-    [0,  1, !!pCell?.walls.S || !!(floor.cells[playerZ+1]?.[playerX]?.walls.N)],
-    [1,  0, !!pCell?.walls.E || !!(floor.cells[playerZ]?.[playerX+1]?.walls.W)],
-    [-1, 0, !!pCell?.walls.W || !!(floor.cells[playerZ]?.[playerX-1]?.walls.E)],
-  ];
-  for (const [dx, dz, hasWall] of dirs) {
-    if (hasWall) continue; // sound can't arrive through a wall
-    const nx = playerX + dx, nz = playerZ + dz;
-    if (nx < 0 || nx >= W || nz < 0 || nz >= H) continue;
-    const drop = Math.max(0, pc - cost[idx(nx, nz)]);
-    sumX      += dx * drop;
-    sumZ      += dz * drop;
-    totalDrop += drop;
+  {
+    const seen = new Set<number>([pi]);
+    let frontier: [number, number][] = [[playerX, playerZ]];
+    for (let depth = 0; depth < DIRECTION_SAMPLE_DEPTH; depth++) {
+      const next: [number, number][] = [];
+      for (const [x, z] of frontier) {
+        const cell = floor.cells[z]?.[x];
+        if (!cell) continue;
+        const moves: [number, number, boolean][] = [
+          [x,   z-1, cell.walls.N || !!(floor.cells[z-1]?.[x]?.walls.S)],
+          [x,   z+1, cell.walls.S || !!(floor.cells[z+1]?.[x]?.walls.N)],
+          [x+1, z,   cell.walls.E || !!(floor.cells[z]?.[x+1]?.walls.W)],
+          [x-1, z,   cell.walls.W || !!(floor.cells[z]?.[x-1]?.walls.E)],
+        ];
+        for (const [nx, nz, hasWall] of moves) {
+          if (hasWall || nx < 0 || nx >= W || nz < 0 || nz >= H) continue;
+          const ni = idx(nx, nz);
+          if (seen.has(ni)) continue;
+          seen.add(ni);
+          next.push([nx, nz]);
+          const drop = Math.max(0, pc - cost[ni]);
+          if (drop <= 0) continue;
+          const ox = nx - playerX, oz = nz - playerZ;
+          const olen = Math.sqrt(ox * ox + oz * oz) || 1;
+          sumX      += (ox / olen) * drop;
+          sumZ      += (oz / olen) * drop;
+          totalDrop += drop;
+        }
+      }
+      frontier = next;
+    }
   }
 
   const len = Math.sqrt(sumX * sumX + sumZ * sumZ);
