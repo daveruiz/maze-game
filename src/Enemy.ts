@@ -30,8 +30,8 @@ const ALERT_RANGE = 30; // world units — other enemies within this get alerted
 
 // Suspicion system
 const SUSPICION_DECAY       = 0.04;  // per second — idle cooldown rate
-const SUSPICION_BUILD_SIGHT = 0.30;  // per second from visible flashlight (beyond direct sight)
-const SUSPICION_BUILD_NOISE = 0.50;  // per second at playerNoise=1.0, scaled by noise level
+const SUSPICION_BUILD_SIGHT = 0.60;  // per second from visible flashlight (constant, linear falloff)
+const SUSPICION_BUILD_NOISE = 0.50;  // per second at playerNoise=1.0, squared falloff
 const SUSPICION_ON_LOST     = 0.75;  // suspicion reset value when enemy loses player from chase
 const SUSPICION_ON_ALERT    = 0.50;  // suspicion boost when alerted by a sibling
 
@@ -330,9 +330,9 @@ export class Enemy {
     if (this.state === EnemyState.SEARCHING) {
       let gain = 0;
       if (flashlightVisible) {
-        // Flashlight: full gain up close, squared falloff to zero at 1.5× sight range
+        // Flashlight: constant signal while on — linear falloff (gentler than sound)
         const f = Math.max(0, 1 - distToPlayer / (SIGHT_RANGE * 1.5));
-        gain += SUSPICION_BUILD_SIGHT * f * f;
+        gain += SUSPICION_BUILD_SIGHT * f;
       }
       if (canHear) {
         // Hearing: squared distance falloff within the current dark range
