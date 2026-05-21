@@ -97,41 +97,42 @@ class EnemyChannel {
     this.panner.connect(this.wetGain).connect(reverbBus);
   }
 
-  /** Update occlusion based on distance, wall count, and directionality confidence.
-   *  Walls add muffle (low-pass) + push dry→wet. Distance also contributes.
-   *  confidence: 1 = single clear direction (directional), 0 = sound arriving
-   *  equally from all sides (diffuse) → extra reverb, less dry. */
-  updateOcclusion(dist: number, wallCount: number, confidence = 1.0) {
-    const SMOOTH = 0.08; // lerp speed per call (~frame rate)
+  /** Update occlusion based on distance, wall count, confidence, and line-of-sight.
+   *  hasLOS=false (enemy behind a wall) strongly attenuates the direct signal and
+   *  applies a low-pass muffle — reverb tail is kept prominent so the enemy remains
+   *  audible but clearly feels like it's on the other side of a wall. */
+  updateOcclusion(dist: number, wallCount: number, confidence = 1.0, hasLOS = true) {
+    const SMOOTH = 0.08;
 
-    // ── Distance contribution ──
     const MIN_DIST = 3, MAX_DIST = 40;
     const distT = Math.max(0, Math.min(1, (dist - MIN_DIST) / (MAX_DIST - MIN_DIST)));
+    const wallT = Math.min(1, wallCount / 6);
 
-    // ── Wall contribution (each wall adds significant muffle + reverb) ──
-    const wallT = Math.min(1, wallCount / 6); // 6+ walls = fully occluded
+    let targetDry: number;
+    let targetWet: number;
+    let targetCutoff: number;
 
-    // Combined occlusion factor (walls dominate, distance adds to it)
-    const occlusion = Math.min(1, wallT * 0.7 + distT * 0.4);
+    if (hasLOS) {
+      // Visible: distance + wall count drive occlusion normally
+      const occlusion  = Math.min(1, wallT * 0.7 + distT * 0.4);
+      const directBoost = wallCount === 0 ? 1.2 : 1.0;
+      const confScale   = 0.45 + confidence * 0.55;
+      targetDry    = (1.0 - occlusion * 0.75) * directBoost * confScale;
+      targetWet    = 0.1 + occlusion * 1.2 + (1.0 - confidence) * 0.5;
+      targetCutoff = 20000 * Math.pow(0.25, wallT);
+    } else {
+      // Hidden: mostly reverb, quiet + muffled direct signal
+      targetDry    = 0.12 * (0.5 + confidence * 0.5) * (1 - distT * 0.5);
+      targetWet    = Math.max(0.6, 0.1 + distT * 0.8);
+      targetCutoff = Math.max(800, 4000 - distT * 2500);
+    }
 
-    // Dry/wet: more occlusion = less dry, more reverb.
-    // Confidence modulates the dry level: low confidence (diffuse arrival from
-    // many corridors) adds reverb and reduces the directional dry component.
-    const directBoost = wallCount === 0 ? 1.2 : 1.0;
-    const confScale   = 0.45 + confidence * 0.55; // 0.45 fully diffuse → 1.0 directional
-    const targetDry   = (1.0 - occlusion * 0.75) * directBoost * confScale;
-    const targetWet   = 0.1 + occlusion * 1.2 + (1.0 - confidence) * 0.5; // extra reverb when diffuse
-
-    // Low-pass cutoff: walls muffle high frequencies
-    const targetCutoff = 20000 * Math.pow(0.25, wallT); // exponential: 20k → ~1.25k
-
-    // Smooth toward targets
-    this.currentDry    += (targetDry - this.currentDry) * SMOOTH;
-    this.currentWet    += (targetWet - this.currentWet) * SMOOTH;
+    this.currentDry    += (targetDry    - this.currentDry)    * SMOOTH;
+    this.currentWet    += (targetWet    - this.currentWet)    * SMOOTH;
     this.currentCutoff += (targetCutoff - this.currentCutoff) * SMOOTH;
 
-    this.dryGain.gain.value = this.currentDry;
-    this.wetGain.gain.value = this.currentWet;
+    this.dryGain.gain.value              = Math.max(0, this.currentDry);
+    this.wetGain.gain.value              = Math.max(0, this.currentWet);
     this.occlusionFilter.frequency.value = this.currentCutoff;
   }
 
@@ -618,8 +619,8 @@ export class AudioManager {
   }
 
   /** Update per-enemy sound occlusion (distance + wall count + confidence → reverb mix + muffle) */
-  updateChannelOcclusion(id: number, dist: number, wallCount: number, confidence = 1.0) {
-    this.channels.get(id)?.updateOcclusion(dist, wallCount, confidence);
+  updateChannelOcclusion(id: number, dist: number, wallCount: number, confidence = 1.0, hasLOS = true) {
+    this.channels.get(id)?.updateOcclusion(dist, wallCount, confidence, hasLOS);
   }
 
   /** Update rear-source attenuation for a channel (0=front, 1=behind) */

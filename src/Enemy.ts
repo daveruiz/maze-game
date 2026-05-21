@@ -90,7 +90,9 @@ export class Enemy {
   private soundOcclusionTimer = 0;
   private soundWallCount = 0;
   private soundConfidence = 1.0;
+  private soundHasLOS = true;
   private soundVirtualPos: THREE.Vector3 = new THREE.Vector3();
+  private smoothSoundPos: THREE.Vector3 = new THREE.Vector3();
 
   private noticeCooldown = 0;
 
@@ -235,6 +237,8 @@ export class Enemy {
     this.mesh.position.copy(this.pos);
     this.stuckCheckPos.copy(this.pos);
     this.soundVirtualPos.copy(this.pos);
+    this.smoothSoundPos.copy(this.pos);
+    this.soundHasLOS = true;
     this.soundWallCount = 0;
     this.soundOcclusionTimer = 0;
     this.state = EnemyState.SEARCHING;
@@ -325,6 +329,7 @@ export class Enemy {
     const glowRange = effectiveSight * 1.35;
 
     const hasLoS = this.hasLineOfSight(playerPos);
+    this.soundHasLOS = hasLoS;
     const canSee     = hasLoS && distToPlayer < effectiveSight;
     const inGlowOnly = !canSee && hasLoS && distToPlayer < glowRange; // peripheral awareness
     const canHear    = playerNoise > 0.1 && distToPlayer < darkRange;
@@ -476,12 +481,19 @@ export class Enemy {
       this.updateSoundOcclusion(playerPos);
     }
 
-    // Position the panner at the virtual sound arrival point (not the enemy's real position)
+    // Position the panner at the virtual sound arrival point (not the enemy's real position).
+    // Lerp smoothly to avoid direction jumps between occlusion updates.
+    const soundGap = this.smoothSoundPos.distanceTo(this.soundVirtualPos);
+    if (soundGap > 30) {
+      this.smoothSoundPos.copy(this.soundVirtualPos);
+    } else {
+      this.smoothSoundPos.lerp(this.soundVirtualPos, 1 - Math.exp(-dt * 5));
+    }
     this.audio.setChannelPosition(
       this.channelId,
-      this.soundVirtualPos.x, this.soundVirtualPos.y, this.soundVirtualPos.z
+      this.smoothSoundPos.x, this.smoothSoundPos.y, this.smoothSoundPos.z
     );
-    this.audio.updateChannelOcclusion(this.channelId, distToPlayer, this.soundWallCount, this.soundConfidence);
+    this.audio.updateChannelOcclusion(this.channelId, distToPlayer, this.soundWallCount, this.soundConfidence, this.soundHasLOS);
 
     // Rear-source attenuation: dot product of player forward vs direction to sound source
     // rearFactor: 0 = sound in front, 1 = sound directly behind
