@@ -13,32 +13,48 @@ export interface SoundFieldResult {
 const MAX_COST     = 80;   // hard propagation cap; cells beyond this are silent
 const ENERGY_DECAY = 0.10; // energy(cost) = exp(-cost * DECAY)
 
-// Direction gradient sampling radius (cells). Arrival direction is computed
-// from every cell within this radius that has clear line-of-sight from the
-// player's cell — cells fully hidden behind a wall are excluded.
-const DIRECTION_SAMPLE_RADIUS = 6;
+// Flow-field blend factor. Each cell's arrival direction is
+//   normalize(α · step_toward_upstream  +  (1-α) · upstream_cell_direction)
+// α high → reacts quickly to the local corridor (sharper, more local)
+// α low  → inherits the long-range direction (smoother round corners)
+const FLOW_ALPHA = 0.6;
+
+export interface SoundMap {
+  cost: Float32Array; // step-cost per cell; unreachable cells have cost > MAX_COST
+  dirX: Float32Array; // normalized arrival direction (toward source) per cell
+  dirZ: Float32Array;
+  coh:  Float32Array; // 0–1 directional coherence per cell (confidence)
+}
 
 /**
- * Flood-fill sound energy from a source cell (enemy) through the maze grid
- * using Dijkstra (Dial's algorithm) along open corridors only — walls are opaque.
- * Returns the direction from which sound arrives at the player's cell and a
- * directionality confidence.
+ * Dijkstra (Dial's algorithm) flood-fill from (srcX, srcZ) — open corridors
+ * only, walls opaque. Builds the cost map and, in the same pass, a propagated
+ * flow field giving the direction sound arrives from at every cell.
  *
- * Direction is computed as the cost-gradient at the player's cell: neighbors
- * with lower cost are "upstream" toward the source. Weighting by cost-drop
- * naturally blends multiple arriving corridors, giving accurate positions when
- * sound wraps around corners and wider/diffuse feel when it arrives from many paths.
+ * Each cell's direction points back toward the source and is
+ *   normalize(α · step_to_upstream + (1-α) · upstream.dir)
+ * — the local corridor step blended with the direction that reached the
+ * upstream (lower-cost) cell, so the field bends smoothly around corners.
+ * Where several equal-cost corridors feed one cell, their unit contributions
+ * are summed; the summed length over the contribution count is the
+ * directional coherence (1 = one clear corridor, →0 = sound from many sides).
  *
- * Confidence = magnitude / sum_of_cost_drops. High when one corridor dominates,
- * low when energy arrives equally from several directions — use it to drive the
- * dry/wet (directional vs reverb) balance.
+ * Because the field is resolved during propagation, querying any cell is
+ * O(1) — no per-query gradient sampling or line-of-sight tracing needed.
  */
-/** Dijkstra flood-fill from (srcX, srcZ) — open corridors only, walls opaque.
- *  Returns Float32Array[W*H] of step-costs; unreachable cells have cost > MAX_COST. */
-function buildCostMap(floor: MazeFloor, srcX: number, srcZ: number): Float32Array {
+export function buildSoundMap(floor: MazeFloor, srcX: number, srcZ: number): SoundMap {
   const W = floor.width, H = floor.height;
-  const cost = new Float32Array(W * H).fill(MAX_COST + 1);
-  const idx  = (x: number, z: number) => z * W + x;
+  const N = W * H;
+  const cost = new Float32Array(N).fill(MAX_COST + 1);
+  const dirX = new Float32Array(N);
+  const dirZ = new Float32Array(N);
+  const coh  = new Float32Array(N);
+  // Unit-contribution accumulators — summed per cell, normalized on finalize.
+  const accX   = new Float32Array(N);
+  const accZ   = new Float32Array(N);
+  const accCnt = new Uint8Array(N);
+  const idx = (x: number, z: number) => z * W + x;
+
   cost[idx(srcX, srcZ)] = 0;
 
   type Entry = [number, number];
@@ -49,7 +65,18 @@ function buildCostMap(floor: MazeFloor, srcX: number, srcZ: number): Float32Arra
     const bucket = buckets[c];
     for (let bi = 0; bi < bucket.length; bi++) {
       const [x, z] = bucket[bi];
-      if (c > cost[idx(x, z)]) continue;
+      const ci = idx(x, z);
+      if (c > cost[ci]) continue;
+
+      // Finalize this cell's direction from its (now complete) accumulator.
+      // The source cell keeps (0,0); coherence stays 0 there.
+      const al = Math.sqrt(accX[ci] * accX[ci] + accZ[ci] * accZ[ci]);
+      if (al > 1e-6) {
+        dirX[ci] = accX[ci] / al;
+        dirZ[ci] = accZ[ci] / al;
+        coh[ci]  = al / accCnt[ci];
+      }
+
       const cell = floor.cells[z]?.[x];
       if (!cell) continue;
 
@@ -65,40 +92,32 @@ function buildCostMap(floor: MazeFloor, srcX: number, srcZ: number): Float32Arra
         const nc = c + 1;
         if (nc > MAX_COST) continue;
         const ni = idx(nx, nz);
-        if (nc < cost[ni]) { cost[ni] = nc; buckets[nc].push([nx, nz]); }
+        if (nc > cost[ni]) continue; // already reached on a cheaper path
+
+        // Contribution: blend the local step toward this upstream cell with
+        // the direction that arrived at it, then normalize so every corridor
+        // counts equally regardless of how much the blend cancels.
+        let bx = FLOW_ALPHA * (x - nx) + (1 - FLOW_ALPHA) * dirX[ci];
+        let bz = FLOW_ALPHA * (z - nz) + (1 - FLOW_ALPHA) * dirZ[ci];
+        const bl = Math.sqrt(bx * bx + bz * bz) || 1;
+        bx /= bl;
+        bz /= bl;
+
+        if (nc < cost[ni]) {
+          cost[ni]   = nc;
+          accX[ni]   = bx;
+          accZ[ni]   = bz;
+          accCnt[ni] = 1;
+          buckets[nc].push([nx, nz]);
+        } else { // nc === cost[ni]: an equal-cost corridor also feeds this cell
+          accX[ni]   += bx;
+          accZ[ni]   += bz;
+          accCnt[ni] += 1;
+        }
       }
     }
   }
-  return cost;
-}
-
-/** Grid line-of-sight between two cell centres: true if the straight segment
- *  crosses no wall. Steps finely and checks wall bits on each cell transition. */
-function cellHasLOS(
-  floor: MazeFloor,
-  ax: number, az: number,
-  bx: number, bz: number,
-): boolean {
-  const dx = bx - ax, dz = bz - az;
-  const dist = Math.sqrt(dx * dx + dz * dz);
-  if (dist < 0.5) return true;
-  const steps = Math.ceil(dist * 4); // ~0.25-cell stepping
-  let cx = ax, cz = az;
-  for (let i = 1; i <= steps; i++) {
-    const t = i / steps;
-    const nx = Math.round(ax + dx * t);
-    const nz = Math.round(az + dz * t);
-    if (nx === cx && nz === cz) continue;
-    const cur = floor.cells[cz]?.[cx];
-    const nxt = floor.cells[nz]?.[nx];
-    if (!cur || !nxt) return false;
-    if (nx > cx && (cur.walls.E || nxt.walls.W)) return false;
-    if (nx < cx && (cur.walls.W || nxt.walls.E)) return false;
-    if (nz > cz && (cur.walls.S || nxt.walls.N)) return false;
-    if (nz < cz && (cur.walls.N || nxt.walls.S)) return false;
-    cx = nx; cz = nz;
-  }
-  return true;
+  return { cost, dirX, dirZ, coh };
 }
 
 /**
@@ -113,8 +132,8 @@ export function computeSoundEnergies(
   const W = floor.width, H = floor.height;
   if (srcX < 0 || srcX >= W || srcZ < 0 || srcZ >= H)
     return new Float32Array(W * H);
-  const cost = buildCostMap(floor, srcX, srcZ);
-  const out  = new Float32Array(W * H);
+  const { cost } = buildSoundMap(floor, srcX, srcZ);
+  const out = new Float32Array(W * H);
   for (let i = 0; i < cost.length; i++)
     out[i] = cost[i] > MAX_COST ? 0 : Math.exp(-cost[i] * ENERGY_DECAY);
   return out;
@@ -132,45 +151,15 @@ export function computeSoundField(
     return { dirX: 0, dirZ: 0, confidence: 0, energy: 0, wallCrossings: 0 };
   }
 
-  const cost = buildCostMap(floor, srcX, srcZ);
-  const idx  = (x: number, z: number) => z * W + x;
-
-  // Attenuation at the player's cell (walls = 0 crossings by definition now)
-  const pi     = idx(playerX, playerZ);
-  const pc     = cost[pi];
+  const { cost, dirX, dirZ, coh } = buildSoundMap(floor, srcX, srcZ);
+  const pi = playerZ * W + playerX;
+  const pc = cost[pi];
   const energy = pc > MAX_COST ? 0 : Math.exp(-pc * ENERGY_DECAY);
 
-  // Cost-gradient arrival direction — sampled over directly-visible cells.
-  // Every cell within DIRECTION_SAMPLE_RADIUS that has clear line-of-sight
-  // from the player's cell contributes unit_offset * cost_drop. Cells fully
-  // hidden behind a wall are excluded: sound from them bends around corners,
-  // so their straight-line grid offset doesn't represent the true arrival
-  // direction. The cost_drop (player_cost - cell_cost) is positive only for
-  // upstream cells; the vector-sum magnitude relative to the total drop is
-  // the directionality confidence.
-  let sumX = 0, sumZ = 0, totalDrop = 0;
-  const R = DIRECTION_SAMPLE_RADIUS;
-  for (let oz = -R; oz <= R; oz++) {
-    for (let ox = -R; ox <= R; ox++) {
-      if (ox === 0 && oz === 0) continue;
-      if (ox * ox + oz * oz > R * R) continue; // circular radius
-      const nx = playerX + ox, nz = playerZ + oz;
-      if (nx < 0 || nx >= W || nz < 0 || nz >= H) continue;
-      const drop = Math.max(0, pc - cost[idx(nx, nz)]);
-      if (drop <= 0) continue; // not upstream toward the source
-      if (!cellHasLOS(floor, playerX, playerZ, nx, nz)) continue; // hidden by a wall
-      const olen = Math.sqrt(ox * ox + oz * oz);
-      sumX      += (ox / olen) * drop;
-      sumZ      += (oz / olen) * drop;
-      totalDrop += drop;
-    }
-  }
-
-  const len = Math.sqrt(sumX * sumX + sumZ * sumZ);
   return {
-    dirX:          len > 0.001 ? sumX / len : 0,
-    dirZ:          len > 0.001 ? sumZ / len : 0,
-    confidence:    totalDrop > 0.001 ? len / totalDrop : 0,
+    dirX:          dirX[pi],
+    dirZ:          dirZ[pi],
+    confidence:    coh[pi],
     energy,
     wallCrossings: 0,
   };
