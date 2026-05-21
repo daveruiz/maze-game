@@ -527,22 +527,20 @@ export class Game {
       }
     }
 
-    // Unified player visibility (0=pitch dark, 1=fully lit)
-    // Flashlight = 1.0; scene lanterns scale up to 0.75 based on proximity
+    // Unified player visibility (0=pitch dark, 1=fully lit) — pure gameplay, unaffected by debug modes
+    // Flashlight = 1.0; scene lanterns scale up to 0.75 based on proximity to their map positions
     let lanternExposure = 0;
-    if (!this.debugLight) {
-      const LANTERN_FULL = 2.5;  // within this = full exposure
-      const LANTERN_MAX  = 8.0;  // beyond this = no exposure
-      for (const lp of lanterns) {
-        const dx = lp.x - pp.x, dz = lp.z - pp.z;
-        const dist = Math.sqrt(dx * dx + dz * dz);
-        if (dist < LANTERN_MAX) {
-          const t = Math.max(0, dist - LANTERN_FULL) / (LANTERN_MAX - LANTERN_FULL);
-          lanternExposure = Math.max(lanternExposure, 1 - t);
-        }
+    const LANTERN_FULL = 2.5;  // within this = full exposure
+    const LANTERN_MAX  = 8.0;  // beyond this = no exposure
+    for (const lp of lanterns) {
+      const dx = lp.x - pp.x, dz = lp.z - pp.z;
+      const dist = Math.sqrt(dx * dx + dz * dz);
+      if (dist < LANTERN_MAX) {
+        const t = Math.max(0, dist - LANTERN_FULL) / (LANTERN_MAX - LANTERN_FULL);
+        lanternExposure = Math.max(lanternExposure, 1 - t);
       }
     }
-    this.playerVisibility = (this.flashlightOn || this.debugLight) ? 1.0 : lanternExposure * 0.75;
+    this.playerVisibility = this.flashlightOn ? 1.0 : lanternExposure * 0.75;
 
     // Audio listener + footsteps
     this.audio.setListenerPose(pp.x, pp.y, pp.z, fwd.x, fwd.y, fwd.z);
