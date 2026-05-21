@@ -481,13 +481,17 @@ export class Enemy {
       this.updateSoundOcclusion(playerPos);
     }
 
-    // Position the panner at the virtual sound arrival point (not the enemy's real position).
-    // Lerp smoothly to avoid direction jumps between occlusion updates.
-    const soundGap = this.smoothSoundPos.distanceTo(this.soundVirtualPos);
-    if (soundGap > 30) {
-      this.smoothSoundPos.copy(this.soundVirtualPos);
+    // When visible, audio comes directly from the real position.
+    // Behind walls, lerp toward the flow-field virtual position for smooth direction.
+    if (this.soundHasLOS) {
+      this.smoothSoundPos.copy(this.pos);
     } else {
-      this.smoothSoundPos.lerp(this.soundVirtualPos, 1 - Math.exp(-dt * 5));
+      const soundGap = this.smoothSoundPos.distanceTo(this.soundVirtualPos);
+      if (soundGap > 30) {
+        this.smoothSoundPos.copy(this.soundVirtualPos);
+      } else {
+        this.smoothSoundPos.lerp(this.soundVirtualPos, 1 - Math.exp(-dt * 5));
+      }
     }
     this.audio.setChannelPosition(
       this.channelId,
