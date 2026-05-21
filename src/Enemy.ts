@@ -28,12 +28,13 @@ const INVESTIGATE_RADIUS   = 8;   // pick cells within this radius of last known
 const ALERT_RANGE = 30; // world units — other enemies within this get alerted
 
 // Suspicion system
-const SUSPICION_DECAY       = 0.04;  // per second — idle cooldown rate
-const SUSPICION_BUILD_DIRECT = 2.00; // per second from direct visual contact (very fast)
-const SUSPICION_BUILD_SIGHT  = 0.60; // per second from flashlight glow beyond sight range
-const SUSPICION_BUILD_NOISE  = 0.50; // per second at playerNoise=1.0, squared falloff
-const SUSPICION_ON_LOST     = 0.75;  // suspicion reset value when enemy loses player from chase
-const SUSPICION_ON_ALERT    = 0.50;  // suspicion boost when alerted by a sibling
+const SUSPICION_DECAY        = 0.04;  // per second — idle cooldown rate
+const SUSPICION_BUILD_DIRECT = 2.00;  // per second from direct visual contact (very fast)
+const SUSPICION_BUILD_SIGHT  = 0.60;  // per second from flashlight glow beyond sight range
+const SUSPICION_BUILD_NOISE  = 0.50;  // per second at playerNoise=1.0, squared falloff
+const SUSPICION_BUILD_AMBIENT = 0.40; // per second from scene lantern light exposure
+const SUSPICION_ON_LOST      = 0.75;  // suspicion reset value when enemy loses player from chase
+const SUSPICION_ON_ALERT     = 0.50;  // suspicion boost when alerted by a sibling
 
 // Sound occlusion — recomputed every ~1s, not every frame
 const SOUND_OCCLUSION_INTERVAL = 0.8; // seconds between BFS recalculations
@@ -250,7 +251,7 @@ export class Enemy {
     this.searchTimer = this.investigateTimer + 1; // don't override with random search
   }
 
-  update(dt: number, playerPos: THREE.Vector3, playerFloor: number, camera: THREE.Camera, flashlightOn = true, playerNoise = 0): boolean {
+  update(dt: number, playerPos: THREE.Vector3, playerFloor: number, camera: THREE.Camera, flashlightOn = true, playerNoise = 0, lightExposure = 0): boolean {
     // Only active when player is on the same floor
     if (this.homeFloor !== playerFloor) {
       this.mesh.visible = false;
@@ -311,11 +312,16 @@ export class Enemy {
     const DARK_MIN_RANGE = 0.3;  // crouching / silent — nearly invisible
     const DARK_MAX_RANGE = 19;   // loud noise (landing)
     const darkRange = DARK_MIN_RANGE + playerNoise * (DARK_MAX_RANGE - DARK_MIN_RANGE);
-    const effectiveSight = flashlightOn ? SIGHT_RANGE : darkRange;
+    // Scene lanterns boost dark sight: at full exposure, enemy sees as well as with flashlight
+    const ambientSight = Math.max(darkRange, lightExposure * SIGHT_RANGE * 0.8);
+    const effectiveSight = flashlightOn ? SIGHT_RANGE : ambientSight;
     const hasLoS = this.hasLineOfSight(playerPos);
     const canSee = hasLoS && distToPlayer < effectiveSight;
     // Flashlight glow visible slightly beyond direct sight range — builds suspicion
     const flashlightVisible = flashlightOn && hasLoS && distToPlayer < SIGHT_RANGE * 1.5;
+    // Ambient light glow: player lit by lantern is visible like a dim constant beacon
+    const ambientLitRange = ambientSight * 1.3;
+    const ambientLitGlow = !flashlightOn && lightExposure > 0.05 && hasLoS && distToPlayer < ambientLitRange;
 
     const canHear = !flashlightOn && playerNoise > 0.1 && distToPlayer < darkRange;
 
@@ -330,6 +336,10 @@ export class Enemy {
         // Flashlight glow beyond direct sight — constant, linear falloff
         const f = Math.max(0, 1 - distToPlayer / (SIGHT_RANGE * 1.5));
         gain += SUSPICION_BUILD_SIGHT * f;
+      } else if (ambientLitGlow) {
+        // Scene lantern illumination: player lit up by a nearby torch/lantern
+        const f = lightExposure * Math.max(0, 1 - distToPlayer / ambientLitRange);
+        gain += SUSPICION_BUILD_AMBIENT * f;
       }
       if (canHear) {
         // Sound: squared distance falloff within the current dark range
@@ -357,7 +367,7 @@ export class Enemy {
       case EnemyState.SEARCHING:
         this.audio.playChannelState(this.channelId, 'searching');
         // Any detection → investigate toward player (suspicion handles chase trigger)
-        if (canSee || canHear) {
+        if (canSee || canHear || ambientLitGlow) {
           this.lastKnownPlayerPos = playerPos.clone();
           if (this.pathTimer >= PATH_UPDATE_INTERVAL || this.path.length === 0) {
             this.pathTimer = 0;
@@ -365,7 +375,8 @@ export class Enemy {
             this.searchTarget = this.investigateTarget;
             this.path = this.smoothPath(this.bfsPath(this.pos, this.investigateTarget, true));
           }
-          this.investigateTimer = Math.max(this.investigateTimer, canSee ? 8 : 6 + playerNoise * 4);
+          const litTimer = ambientLitGlow ? 4 + lightExposure * 4 : 0;
+          this.investigateTimer = Math.max(this.investigateTimer, canSee ? 8 : canHear ? 6 + playerNoise * 4 : litTimer);
           this.reachedLastKnown = false;
         }
         // Move: investigate or patrol

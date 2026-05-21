@@ -520,6 +520,22 @@ export class Game {
       }
     }
 
+    // Compute player's ambient light exposure from nearest scene lanterns
+    // Used by Enemy to make player more visible when standing near a light source
+    let playerLightExposure = 0;
+    const LANTERN_FULL_RANGE = 2.5;  // within this = full exposure
+    const LANTERN_MAX_RANGE  = 8.0;  // beyond this = no exposure
+    if (!this.debugLight) {
+      for (const lp of lanterns) {
+        const dx = lp.x - pp.x, dz = lp.z - pp.z;
+        const dist = Math.sqrt(dx * dx + dz * dz);
+        if (dist < LANTERN_MAX_RANGE) {
+          const t = Math.max(0, dist - LANTERN_FULL_RANGE) / (LANTERN_MAX_RANGE - LANTERN_FULL_RANGE);
+          playerLightExposure = Math.max(playerLightExposure, 1 - t);
+        }
+      }
+    }
+
     // Audio listener + footsteps
     this.audio.setListenerPose(pp.x, pp.y, pp.z, fwd.x, fwd.y, fwd.z);
     if (this.player.justJumped) this.audio.playJumpSteps();
@@ -534,7 +550,7 @@ export class Game {
         enemy.setPlayerHint(pp);
         enemy.setKeyCollected(hasKey === true);
       }
-      const caught = enemy.update(dt, pp, this.player.floorIndex, this.camera, this.flashlightOn, this.player.noiseLevel);
+      const caught = enemy.update(dt, pp, this.player.floorIndex, this.camera, this.flashlightOn, this.player.noiseLevel, playerLightExposure);
       if (caught && !caughtBy) {
         caughtBy = enemy;
       }
