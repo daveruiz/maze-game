@@ -29,10 +29,9 @@ const ALERT_RANGE = 30; // world units — other enemies within this get alerted
 
 // Suspicion system
 const SUSPICION_DECAY        = 0.04;  // per second — idle cooldown rate
-const SUSPICION_BUILD_DIRECT = 2.00;  // per second from direct visual contact (very fast)
-const SUSPICION_BUILD_SIGHT  = 0.60;  // per second from flashlight glow beyond sight range
-const SUSPICION_BUILD_NOISE  = 0.50;  // per second at playerNoise=1.0, squared falloff
-const SUSPICION_BUILD_AMBIENT = 0.40; // per second from scene lantern light exposure
+const SUSPICION_BUILD_DIRECT = 2.00;  // per second when enemy directly sees player (scales with visibility)
+const SUSPICION_BUILD_GLOW   = 0.60;  // per second from peripheral awareness beyond direct sight (scales with visibility)
+const SUSPICION_BUILD_NOISE  = 0.50;  // per second at playerNoise=1.0, squared falloff (independent of visibility)
 const SUSPICION_ON_LOST      = 0.75;  // suspicion reset value when enemy loses player from chase
 const SUSPICION_ON_ALERT     = 0.50;  // suspicion boost when alerted by a sibling
 
@@ -251,7 +250,8 @@ export class Enemy {
     this.searchTimer = this.investigateTimer + 1; // don't override with random search
   }
 
-  update(dt: number, playerPos: THREE.Vector3, playerFloor: number, camera: THREE.Camera, flashlightOn = true, playerNoise = 0, lightExposure = 0): boolean {
+  // playerVisibility: 0=completely dark/hidden, 1=fully lit (flashlight on or right next to lantern)
+  update(dt: number, playerPos: THREE.Vector3, playerFloor: number, camera: THREE.Camera, playerVisibility = 1.0, playerNoise = 0): boolean {
     // Only active when player is on the same floor
     if (this.homeFloor !== playerFloor) {
       this.mesh.visible = false;
@@ -304,45 +304,38 @@ export class Enemy {
 
     const distToPlayer = this.pos.distanceTo(playerPos);
 
-    // Detection range: flashlight on = full sight, off = noise-based
-    // Crouching in the dark (noise ~0) = must be within 2 units to detect
-    // Walking in the dark (noise ~0.3) = ~7 units
-    // Sprinting in the dark (noise ~0.7) = ~18 units
-    // Landing (noise ~1.0) = ~25 units
-    const DARK_MIN_RANGE = 0.3;  // crouching / silent — nearly invisible
-    const DARK_MAX_RANGE = 19;   // loud noise (landing)
+    // Noise-based hearing range (independent of light — enemies always listen)
+    // Crouching/still: 0.3 units | Walking: ~6 | Sprinting: ~14 | Landing: ~19
+    const DARK_MIN_RANGE = 0.3;
+    const DARK_MAX_RANGE = 19;
     const darkRange = DARK_MIN_RANGE + playerNoise * (DARK_MAX_RANGE - DARK_MIN_RANGE);
-    // Scene lanterns boost dark sight: at full exposure, enemy sees as well as with flashlight
-    const ambientSight = Math.max(darkRange, lightExposure * SIGHT_RANGE * 0.8);
-    const effectiveSight = flashlightOn ? SIGHT_RANGE : ambientSight;
-    const hasLoS = this.hasLineOfSight(playerPos);
-    const canSee = hasLoS && distToPlayer < effectiveSight;
-    // Flashlight glow visible slightly beyond direct sight range — builds suspicion
-    const flashlightVisible = flashlightOn && hasLoS && distToPlayer < SIGHT_RANGE * 1.5;
-    // Ambient light glow: player lit by lantern is visible like a dim constant beacon
-    const ambientLitRange = ambientSight * 1.3;
-    const ambientLitGlow = !flashlightOn && lightExposure > 0.05 && hasLoS && distToPlayer < ambientLitRange;
 
-    const canHear = !flashlightOn && playerNoise > 0.1 && distToPlayer < darkRange;
+    // Unified visibility-based sight:
+    //   visibility=1.0 (flashlight on / right next to lantern) → full SIGHT_RANGE
+    //   visibility=0   (pitch dark)                            → 10% of SIGHT_RANGE (nearly blind)
+    const effectiveSight = SIGHT_RANGE * Math.max(0.1, playerVisibility);
+    // Peripheral glow range: slightly beyond direct sight (builds suspicion slower)
+    const glowRange = effectiveSight * 1.35;
+
+    const hasLoS = this.hasLineOfSight(playerPos);
+    const canSee     = hasLoS && distToPlayer < effectiveSight;
+    const inGlowOnly = !canSee && hasLoS && distToPlayer < glowRange; // peripheral awareness
+    const canHear    = playerNoise > 0.1 && distToPlayer < darkRange;
 
     // ── Suspicion update (only while searching — chasing uses its own FSM) ───
     if (this.state === EnemyState.SEARCHING) {
       let gain = 0;
       if (canSee) {
-        // Direct visual contact — fast buildup, minimum 30% even at range edge
-        const f = 0.3 + 0.7 * Math.max(0, 1 - distToPlayer / effectiveSight);
-        gain += SUSPICION_BUILD_DIRECT * f;
-      } else if (flashlightVisible) {
-        // Flashlight glow beyond direct sight — constant, linear falloff
-        const f = Math.max(0, 1 - distToPlayer / (SIGHT_RANGE * 1.5));
-        gain += SUSPICION_BUILD_SIGHT * f;
-      } else if (ambientLitGlow) {
-        // Scene lantern illumination: player lit up by a nearby torch/lantern
-        const f = lightExposure * Math.max(0, 1 - distToPlayer / ambientLitRange);
-        gain += SUSPICION_BUILD_AMBIENT * f;
+        // Direct visual contact — fast build, min 30% floor even at range edge
+        const distF = 0.3 + 0.7 * Math.max(0, 1 - distToPlayer / effectiveSight);
+        gain += SUSPICION_BUILD_DIRECT * playerVisibility * distF;
+      } else if (inGlowOnly) {
+        // Peripheral awareness: player visible but outside direct sight — slower build
+        const distF = Math.max(0, 1 - distToPlayer / glowRange);
+        gain += SUSPICION_BUILD_GLOW * playerVisibility * distF;
       }
       if (canHear) {
-        // Sound: squared distance falloff within the current dark range
+        // Sound: squared distance falloff — independent of light level
         const f = Math.max(0, 1 - distToPlayer / darkRange);
         gain += SUSPICION_BUILD_NOISE * playerNoise * f * f;
       }
@@ -367,7 +360,7 @@ export class Enemy {
       case EnemyState.SEARCHING:
         this.audio.playChannelState(this.channelId, 'searching');
         // Any detection → investigate toward player (suspicion handles chase trigger)
-        if (canSee || canHear || ambientLitGlow) {
+        if (canSee || canHear || inGlowOnly) {
           this.lastKnownPlayerPos = playerPos.clone();
           if (this.pathTimer >= PATH_UPDATE_INTERVAL || this.path.length === 0) {
             this.pathTimer = 0;
@@ -375,8 +368,8 @@ export class Enemy {
             this.searchTarget = this.investigateTarget;
             this.path = this.smoothPath(this.bfsPath(this.pos, this.investigateTarget, true));
           }
-          const litTimer = ambientLitGlow ? 4 + lightExposure * 4 : 0;
-          this.investigateTimer = Math.max(this.investigateTimer, canSee ? 8 : canHear ? 6 + playerNoise * 4 : litTimer);
+          const glowTimer = inGlowOnly ? 4 + playerVisibility * 4 : 0;
+          this.investigateTimer = Math.max(this.investigateTimer, canSee ? 8 : canHear ? 6 + playerNoise * 4 : glowTimer);
           this.reachedLastKnown = false;
         }
         // Move: investigate or patrol
@@ -390,13 +383,14 @@ export class Enemy {
 
       case EnemyState.CHASING:
         this.audio.playChannelState(this.channelId, 'chasing');
-        if (canSee || canHear || flashlightVisible) {
+        if (canSee || canHear || inGlowOnly) {
           this.lastKnownPlayerPos = playerPos.clone();
         }
 
         this.chaseLockTimer -= dt;
-        const effectiveLoseRange = flashlightOn ? LOSE_RANGE : LOSE_RANGE_DARK;
-        if (this.chaseLockTimer <= 0 && !canSee && !canHear && !flashlightVisible && distToPlayer > effectiveLoseRange) {
+        // Lose range scales with visibility: fully lit player is harder to lose
+        const effectiveLoseRange = LOSE_RANGE_DARK + (LOSE_RANGE - LOSE_RANGE_DARK) * playerVisibility;
+        if (this.chaseLockTimer <= 0 && !canSee && !canHear && !inGlowOnly && distToPlayer > effectiveLoseRange) {
           console.debug(`[Enemy z${this.patrolZone} f${this.floorIndex}] LOST player at dist ${distToPlayer.toFixed(1)}`);
           // Lost the player — go to last known position, then investigate the area
           this.state = EnemyState.SEARCHING;

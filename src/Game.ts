@@ -91,8 +91,13 @@ export class Game {
   private itemMapEl!:        HTMLElement;
   private itemCompassEl!:    HTMLElement;
   private keyNeededEl!:      HTMLElement;
-  private staminaFillEl!:    HTMLElement;
-  private suspicionDebugEl!: HTMLElement;
+  private staminaFillEl!:      HTMLElement;
+  private suspicionDebugEl!:   HTMLElement;
+  private visibilityFillEl!:   HTMLElement;
+  private visibilityIconEl!:   HTMLElement;
+
+  // Unified player visibility (0=dark/hidden, 1=fully lit) — computed each frame
+  private playerVisibility = 0;
 
   constructor(container: HTMLElement) {
     this.renderer = new THREE.WebGLRenderer({ antialias: false });
@@ -149,8 +154,10 @@ export class Game {
     this.itemMapEl     = document.getElementById('item-map')!;
     this.itemCompassEl = document.getElementById('item-compass')!;
     this.keyNeededEl   = document.getElementById('key-needed')!;
-    this.staminaFillEl    = document.getElementById('stamina-fill')!;
-    this.suspicionDebugEl = document.getElementById('suspicion-debug')!;
+    this.staminaFillEl      = document.getElementById('stamina-fill')!;
+    this.suspicionDebugEl   = document.getElementById('suspicion-debug')!;
+    this.visibilityFillEl   = document.getElementById('visibility-fill')!;
+    this.visibilityIconEl   = document.getElementById('visibility-icon')!;
 
     // Debug full-bright light (added to scene on demand)
     this.debugAmbient = new THREE.AmbientLight(0xffffff, 6);
@@ -520,21 +527,22 @@ export class Game {
       }
     }
 
-    // Compute player's ambient light exposure from nearest scene lanterns
-    // Used by Enemy to make player more visible when standing near a light source
-    let playerLightExposure = 0;
-    const LANTERN_FULL_RANGE = 2.5;  // within this = full exposure
-    const LANTERN_MAX_RANGE  = 8.0;  // beyond this = no exposure
+    // Unified player visibility (0=pitch dark, 1=fully lit)
+    // Flashlight = 1.0; scene lanterns scale up to 0.75 based on proximity
+    let lanternExposure = 0;
     if (!this.debugLight) {
+      const LANTERN_FULL = 2.5;  // within this = full exposure
+      const LANTERN_MAX  = 8.0;  // beyond this = no exposure
       for (const lp of lanterns) {
         const dx = lp.x - pp.x, dz = lp.z - pp.z;
         const dist = Math.sqrt(dx * dx + dz * dz);
-        if (dist < LANTERN_MAX_RANGE) {
-          const t = Math.max(0, dist - LANTERN_FULL_RANGE) / (LANTERN_MAX_RANGE - LANTERN_FULL_RANGE);
-          playerLightExposure = Math.max(playerLightExposure, 1 - t);
+        if (dist < LANTERN_MAX) {
+          const t = Math.max(0, dist - LANTERN_FULL) / (LANTERN_MAX - LANTERN_FULL);
+          lanternExposure = Math.max(lanternExposure, 1 - t);
         }
       }
     }
+    this.playerVisibility = this.flashlightOn ? 1.0 : lanternExposure * 0.75;
 
     // Audio listener + footsteps
     this.audio.setListenerPose(pp.x, pp.y, pp.z, fwd.x, fwd.y, fwd.z);
@@ -550,7 +558,7 @@ export class Game {
         enemy.setPlayerHint(pp);
         enemy.setKeyCollected(hasKey === true);
       }
-      const caught = enemy.update(dt, pp, this.player.floorIndex, this.camera, this.flashlightOn, this.player.noiseLevel, playerLightExposure);
+      const caught = enemy.update(dt, pp, this.player.floorIndex, this.camera, this.playerVisibility, this.player.noiseLevel);
       if (caught && !caughtBy) {
         caughtBy = enemy;
       }
@@ -766,6 +774,13 @@ export class Game {
     const fi = this.player.floorIndex;
     this.floorTextEl.textContent =
       `FLOOR ${fi + 1} / ${NUM_FLOORS}  —  ${this.maze.floors[fi].theme.name.toUpperCase()}`;
+
+    // Visibility bar (how visible the player is to enemies)
+    const visPct = Math.round(this.playerVisibility * 100);
+    this.visibilityFillEl.style.width = `${visPct}%`;
+    this.visibilityFillEl.style.background =
+      visPct > 70 ? '#eee' : visPct > 35 ? '#99c' : '#446';
+    this.visibilityIconEl.textContent = visPct > 50 ? '👁' : '🌑';
 
     // Battery bar
     const pct = this.flashBattery;
