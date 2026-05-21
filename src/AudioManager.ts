@@ -38,8 +38,6 @@ class EnemyChannel {
   private chainsBufRef: AudioBuffer | null = null;
   private chainsVolumeRef = 0.3;
 
-  // Notice sound — independent of oneShot system so it can't be interrupted
-  private noticeNode: AudioBufferSourceNode | null = null;
 
   // MP3 one-shot
   private oneShot: AudioBufferSourceNode | null = null;
@@ -243,10 +241,6 @@ class EnemyChannel {
       this.chainsLoop = null;
     }
     this.stopChainsLoop2();
-    if (this.noticeNode) {
-      try { this.noticeNode.stop(); } catch {}
-      this.noticeNode = null;
-    }
     this.currentState = '';
     this.nextTriggerTime = 0;
   }
@@ -308,7 +302,9 @@ class EnemyChannel {
   }
 
   playNotice(buf: AudioBuffer | null) {
-    if (!buf || this.noticeNode) return; // already playing, don't interrupt itself
+    if (!buf) return;
+    if (this.oneShot && this.oneShotPriority >= 2) return; // don't interrupt alert/spotted
+    this.stopOneShot(); // cut any playing idle sound — enemy is no longer casually wandering
     const src = this.ctx.createBufferSource();
     src.buffer = buf;
     src.playbackRate.value = PLAYBACK_RATE;
@@ -316,8 +312,11 @@ class EnemyChannel {
     g.gain.value = 0.4;
     src.connect(g).connect(this.panner);
     src.start();
-    this.noticeNode = src;
-    src.onended = () => { if (this.noticeNode === src) this.noticeNode = null; };
+    this.oneShot = src;
+    this.oneShotPriority = 2;
+    src.onended = () => { if (this.oneShot === src) { this.oneShot = null; this.oneShotPriority = 0; } };
+    // Push idle sounds back — enemy is alert/searching, not casually vocalising
+    this.scheduleNext(IDLE_MAX_INTERVAL * 1.5, IDLE_MAX_INTERVAL * 2);
   }
 
   private playRandomOneShot(pool: AudioBuffer[], volume: number, priority: number) {
