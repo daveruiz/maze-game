@@ -106,14 +106,23 @@ export function computeSoundField(
   const pc     = cost[pi];
   const energy = pc > MAX_COST ? 0 : Math.exp(-pc * ENERGY_DECAY);
 
-  // Cost-gradient arrival direction.
+  // Cost-gradient arrival direction — sampled through OPEN passages only.
   // For each of the 4 neighbors, the "cost drop" (player_cost - neighbor_cost)
   // is positive only when the neighbor is closer to the source (i.e. upstream).
-  // Summing offset * cost_drop gives the gradient direction; its magnitude
-  // relative to the total positive drop is the directionality confidence.
+  // A neighbor behind a wall is skipped: sound can't physically arrive through
+  // it even if it has a low cost (its energy reached the player via some other
+  // corridor). Summing offset * cost_drop gives the gradient direction; its
+  // magnitude relative to the total positive drop is the directionality confidence.
   let sumX = 0, sumZ = 0, totalDrop = 0;
-  const dirs: [number, number][] = [[0,-1],[0,1],[1,0],[-1,0]];
-  for (const [dx, dz] of dirs) {
+  const pCell = floor.cells[playerZ]?.[playerX];
+  const dirs: [number, number, boolean][] = [
+    [0, -1, !!pCell?.walls.N || !!(floor.cells[playerZ-1]?.[playerX]?.walls.S)],
+    [0,  1, !!pCell?.walls.S || !!(floor.cells[playerZ+1]?.[playerX]?.walls.N)],
+    [1,  0, !!pCell?.walls.E || !!(floor.cells[playerZ]?.[playerX+1]?.walls.W)],
+    [-1, 0, !!pCell?.walls.W || !!(floor.cells[playerZ]?.[playerX-1]?.walls.E)],
+  ];
+  for (const [dx, dz, hasWall] of dirs) {
+    if (hasWall) continue; // sound can't arrive through a wall
     const nx = playerX + dx, nz = playerZ + dz;
     if (nx < 0 || nx >= W || nz < 0 || nz >= H) continue;
     const drop = Math.max(0, pc - cost[idx(nx, nz)]);
