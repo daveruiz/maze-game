@@ -609,10 +609,16 @@ export class AudioManager {
   private _playerAudibility = 0;
   private static readonly AUDIBILITY_SCALE = 8.0; // maps gain values to 0..1 range
 
-  /** Instant-attack: register a sound at normalized level (0..1). */
+  /** Instant-attack: register a sound by its raw gain value (auto-scaled to 0..1). */
   reportPlayerSound(gain: number) {
     const level = Math.min(1, gain * AudioManager.AUDIBILITY_SCALE);
     if (level > this._playerAudibility) this._playerAudibility = level;
+  }
+
+  /** Register a sound at a direct 0..1 audibility level (bypasses AUDIBILITY_SCALE). */
+  private reportPlayerAudibility(level: number) {
+    const clamped = Math.min(1, Math.max(0, level));
+    if (clamped > this._playerAudibility) this._playerAudibility = clamped;
   }
 
   /** Decay audibility toward zero — call once per frame. */
@@ -664,7 +670,9 @@ export class AudioManager {
     if (justLanded && landingImpact > 1) {
       const t = Math.min(1, (landingImpact - 1) / 10);
       const vol = 1.0 + t * 2.0;
-      this.playFootstep(1.0, vol);
+      this.playFootstep(1.0, vol, true); // audio unchanged; audibility reported separately
+      // Scale audibility directly to impact speed so obstacle drops (~6.4) < jumps (~9)
+      this.reportPlayerAudibility((landingImpact - 1) / 10);
       this.footstepTimer = 0;
       return;
     }
@@ -686,7 +694,7 @@ export class AudioManager {
     }
   }
 
-  private playFootstep(speedT: number, volumeMult = 1.0) {
+  private playFootstep(speedT: number, volumeMult = 1.0, skipReport = false) {
     if (!this.ctx || !this.footstepBuf) return;
 
     const src = this.ctx.createBufferSource();
@@ -706,7 +714,7 @@ export class AudioManager {
     const gain = this.ctx.createGain();
     const gainValue = (0.02 + speedT * 0.14) * volumeMult; // 0.02 walk → 0.16 sprint
     gain.gain.value = gainValue;
-    this.reportPlayerSound(gainValue);
+    if (!skipReport) this.reportPlayerSound(gainValue);
 
     src.connect(gain).connect(panner).connect(this.masterGain);
     src.start();
