@@ -282,7 +282,7 @@ export class Enemy {
     this.stuckCheckTimer += dt;
     if (this.stuckCheckTimer >= STUCK_CHECK_INTERVAL) {
       const movedDist = this.pos.distanceTo(this.stuckCheckPos);
-      if (movedDist < STUCK_DISTANCE && this.state !== EnemyState.CHASING) {
+      if (movedDist < STUCK_DISTANCE && this.state !== EnemyState.CHASING && !this.investigateWaiting) {
         // Snap to nearest valid reachable cell first (may be stuck in a wall)
         this.snapToNearestReachable();
         // Then force a new path to a far-away reachable cell
@@ -411,6 +411,8 @@ export class Enemy {
           if (this.investigateWaiting && this.suspicion < 0.05) {
             this.investigateWaiting = false;
             this.investigateTimer = 0;
+            this.stuckCheckPos.copy(this.pos);
+            this.stuckCheckTimer = 0;
           }
           this.doInvestigate(dt, speedMult);
         } else {
