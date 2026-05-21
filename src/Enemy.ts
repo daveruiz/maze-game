@@ -30,8 +30,9 @@ const ALERT_RANGE = 30; // world units — other enemies within this get alerted
 
 // Suspicion system
 const SUSPICION_DECAY       = 0.04;  // per second — idle cooldown rate
-const SUSPICION_BUILD_SIGHT = 0.60;  // per second from visible flashlight (constant, linear falloff)
-const SUSPICION_BUILD_NOISE = 0.50;  // per second at playerNoise=1.0, squared falloff
+const SUSPICION_BUILD_DIRECT = 2.00; // per second from direct visual contact (very fast)
+const SUSPICION_BUILD_SIGHT  = 0.60; // per second from flashlight glow beyond sight range
+const SUSPICION_BUILD_NOISE  = 0.50; // per second at playerNoise=1.0, squared falloff
 const SUSPICION_ON_LOST     = 0.75;  // suspicion reset value when enemy loses player from chase
 const SUSPICION_ON_ALERT    = 0.50;  // suspicion boost when alerted by a sibling
 
@@ -329,13 +330,17 @@ export class Enemy {
     // ── Suspicion update (only while searching — chasing uses its own FSM) ───
     if (this.state === EnemyState.SEARCHING) {
       let gain = 0;
-      if (flashlightVisible) {
-        // Flashlight: constant signal while on — linear falloff (gentler than sound)
+      if (canSee) {
+        // Direct visual contact — fast buildup, minimum 30% even at range edge
+        const f = 0.3 + 0.7 * Math.max(0, 1 - distToPlayer / effectiveSight);
+        gain += SUSPICION_BUILD_DIRECT * f;
+      } else if (flashlightVisible) {
+        // Flashlight glow beyond direct sight — constant, linear falloff
         const f = Math.max(0, 1 - distToPlayer / (SIGHT_RANGE * 1.5));
         gain += SUSPICION_BUILD_SIGHT * f;
       }
       if (canHear) {
-        // Hearing: squared distance falloff within the current dark range
+        // Sound: squared distance falloff within the current dark range
         const f = Math.max(0, 1 - distToPlayer / darkRange);
         gain += SUSPICION_BUILD_NOISE * playerNoise * f * f;
       }
@@ -358,23 +363,20 @@ export class Enemy {
     switch (this.state) {
       case EnemyState.SEARCHING:
         this.audio.playChannelState(this.channelId, 'searching');
-        if (canSee || canHearClose) {
-          // Visual contact or very close sound — chase!
-          this.state = EnemyState.SPOTTED;
+        // Any detection → investigate toward player (suspicion handles chase trigger)
+        if (canSee || canHear) {
           this.lastKnownPlayerPos = playerPos.clone();
-          this.audio.playChannelState(this.channelId, 'spotted');
-          this.alertSiblings(playerPos);
-          console.debug(`[Enemy z${this.patrolZone} f${this.floorIndex}] SPOTTED player at dist ${distToPlayer.toFixed(1)}`);
-        } else if (canHearFar) {
-          // Far sound — investigate toward sound, don't chase
-          this.investigateTarget = playerPos.clone();
-          this.lastKnownPlayerPos = playerPos.clone();
-          this.searchTarget = this.investigateTarget;
-          this.path = this.smoothPath(this.bfsPath(this.pos, this.investigateTarget, true));
-          this.investigateTimer = 6 + playerNoise * 4; // louder = investigate longer
+          if (this.pathTimer >= PATH_UPDATE_INTERVAL || this.path.length === 0) {
+            this.pathTimer = 0;
+            this.investigateTarget = playerPos.clone();
+            this.searchTarget = this.investigateTarget;
+            this.path = this.smoothPath(this.bfsPath(this.pos, this.investigateTarget, true));
+          }
+          this.investigateTimer = Math.max(this.investigateTimer, canSee ? 8 : 6 + playerNoise * 4);
           this.reachedLastKnown = false;
-        } else if (this.investigateTimer > 0) {
-          // Investigating an alert or last-known position
+        }
+        // Move: investigate or patrol
+        if (this.investigateTimer > 0) {
           this.investigateTimer -= dt;
           this.doInvestigate(dt, speedMult);
         } else {
