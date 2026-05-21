@@ -62,6 +62,8 @@ export class Player {
    */
   noiseLevel = 0;
   private smoothedNoise = 0;
+  private stepTimer = 0;
+  justStepped = false;
 
   // Head bob
   private bobPhase = 0;         // oscillation phase (radians)
@@ -179,7 +181,8 @@ export class Player {
 
   update(dt: number): { stairsUp: boolean; stairsDown: boolean; isExit: boolean } {
     this.stairCooldown -= dt;
-    this.justJumped = false;
+    this.justJumped  = false;
+    this.justStepped = false;
 
     // ── Crouch, Sprint & stamina ──────────────────────────────────────
     const wantCrouch = !!(this.keys['KeyC'] || this.keys['ControlLeft'] || this.keys['ControlRight']);
@@ -285,6 +288,21 @@ export class Player {
     // ── Noise level (for enemy hearing) ─────────────────────────────────
     const hSpeed = this.velocity.length();
     this.currentSpeed = hSpeed;
+
+    // Step timer — mirrors AudioManager footstep rhythm so noise pulses with each step
+    const maxSpeed = BASE_SPEED * SPRINT_MULT;
+    const speedT   = Math.min(1, hSpeed / maxSpeed);
+    if (this.isOnGround && hSpeed > 0.3 && !this.crouching) {
+      const stepInterval = 0.5 - speedT * 0.2;
+      this.stepTimer += dt;
+      if (this.stepTimer >= stepInterval) {
+        this.stepTimer -= stepInterval;
+        this.justStepped = true;
+      }
+    } else {
+      this.stepTimer = 0;
+    }
+
     let targetNoise = 0;
     if (this.crouching) {
       targetNoise = 0; // completely silent
@@ -292,13 +310,13 @@ export class Player {
       // Scale with impact energy — a full jump lands at ~sprint level, harder falls go to 1.0
       targetNoise = Math.min(1, this.landingImpact / 6);
     } else if (!this.isOnGround) {
-      targetNoise = 0.05; // airborne — nearly silent
-    } else if (this.sprinting) {
-      targetNoise = 0.85;
-    } else if (hSpeed > 0.3) {
-      targetNoise = 0.3; // walking
+      // Airborne: follow horizontal speed so a sprinting jump stays as loud as sprinting
+      targetNoise = Math.max(0.05, speedT * 0.85);
+    } else if (this.justStepped) {
+      // Each footstep creates a distinct noise spike — sprint = 0.85, walk = 0.3
+      targetNoise = this.sprinting ? 0.85 : 0.3;
     }
-    // Fast attack; landing spikes decay slowly so enemies have time to react (~1s at full impact)
+    // Fast attack so spikes are immediate; slow decay so each spike lingers until the next step
     const nSmooth = targetNoise > this.smoothedNoise ? 15.0 : 1.5;
     this.smoothedNoise += (targetNoise - this.smoothedNoise) * Math.min(1, nSmooth * dt);
     this.noiseLevel = this.smoothedNoise;
@@ -316,17 +334,13 @@ export class Player {
     this.enforceWallMargin();
 
     // ── Head bob ─────────────────────────────────────────────────────────
-    const maxSpeed = BASE_SPEED * SPRINT_MULT;
-    const speedT = Math.min(1, hSpeed / maxSpeed);
-
     // Smooth bob intensity (ramps up/down naturally)
     const targetIntensity = this.isOnGround && hSpeed > 0.3 ? speedT : 0;
-    const bobSmooth = targetIntensity > this.bobIntensity ? 8.0 : 4.0; // ramp up faster
+    const bobSmooth = targetIntensity > this.bobIntensity ? 8.0 : 4.0;
     this.bobIntensity += (targetIntensity - this.bobIntensity) * Math.min(1, bobSmooth * dt);
 
     // Frequency synced with footstep interval (0.5s walk → 0.3s sprint)
-    const stepInterval = 0.5 - speedT * 0.2;
-    const bobFreq = 1 / stepInterval; // ~2.0 Hz walk → ~3.3 Hz sprint
+    const bobFreq = 1 / (0.5 - speedT * 0.2);
     this.bobPhase += bobFreq * dt * Math.PI * 2;
 
     // Vertical bob: subtle — max ~3cm at full sprint
