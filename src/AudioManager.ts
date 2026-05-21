@@ -607,7 +607,7 @@ export class AudioManager {
 
   // ── Player audibility tracking ─────────────────────────────────────────────
   private _playerAudibility = 0;
-  private static readonly AUDIBILITY_SCALE = 6.0; // maps gain values to 0..1 range
+  private static readonly AUDIBILITY_SCALE = 8.0; // maps gain values to 0..1 range
 
   /** Instant-attack: register a sound at normalized level (0..1). */
   reportPlayerSound(gain: number) {
@@ -617,7 +617,7 @@ export class AudioManager {
 
   /** Decay audibility toward zero — call once per frame. */
   tickAudibility(dt: number) {
-    const DECAY = 3.0; // units/s — fast enough to pulse with footsteps
+    const DECAY = 2.0; // units/s — sprint stays elevated between steps; walk pulses clearly
     this._playerAudibility = Math.max(0, this._playerAudibility - DECAY * dt);
   }
 
@@ -684,14 +684,6 @@ export class AudioManager {
       this.footstepTimer -= interval;
       this.playFootstep(speedT);
     }
-  }
-
-  /** Play a double-step (jump takeoff sound) — two quick taps */
-  playJumpSteps() {
-    if (!this.ctx || !this.footstepBuf) return;
-    this.playFootstep(0.8, 1.2);
-    // Second step with slight delay
-    setTimeout(() => this.playFootstep(0.6, 0.8), 60);
   }
 
   private playFootstep(speedT: number, volumeMult = 1.0) {

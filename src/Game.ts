@@ -551,7 +551,6 @@ export class Game {
 
     // Audio listener + footsteps
     this.audio.setListenerPose(pp.x, pp.y, pp.z, fwd.x, fwd.y, fwd.z);
-    if (this.player.justJumped) this.audio.playJumpSteps();
     this.audio.updateFootsteps(dt, this.player.currentSpeed, 7.5, this.player.onGround, this.player.justLanded, this.player.landingImpact, this.player.crouching);
 
     // Enemies + proximity drone
@@ -784,14 +783,14 @@ export class Game {
     const noisePct = Math.round(this.audio.playerAudibility * 100);
     this.noiseFillEl.style.width = `${noisePct}%`;
     this.noiseFillEl.style.background = noisePct > 60 ? '#f44' : noisePct > 20 ? '#fa4' : '#484';
-    this.noiseIconEl.textContent = noisePct > 50 ? '🔊' : noisePct > 15 ? '🔉' : '🔇';
+    this.noiseIconEl.style.opacity = String(0.1 + 0.9 * (noisePct / 100));
 
     // Visibility bar (how visible the player is to enemies)
     const visPct = Math.round(this.playerVisibility * 100);
     this.visibilityFillEl.style.width = `${visPct}%`;
     this.visibilityFillEl.style.background =
       visPct > 70 ? '#eee' : visPct > 35 ? '#99c' : '#446';
-    this.visibilityIconEl.textContent = visPct > 50 ? '👁' : '🌑';
+    this.visibilityIconEl.style.opacity = String(0.1 + 0.9 * (visPct / 100));
 
     // Battery bar
     const pct = this.flashBattery;
