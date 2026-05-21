@@ -33,10 +33,13 @@ class EnemyChannel {
 
   // Constant chains loop (independent of state)
   private chainsLoop: AudioBufferSourceNode | null = null;
+  private chainsGain: GainNode | null = null;          // gain node for loop 1 (speed-controlled)
   // Second chains loop — added during chase for layered texture
   private chainsLoop2: AudioBufferSourceNode | null = null;
+  private chainsGain2: GainNode | null = null;         // gain node for loop 2
   private chainsBufRef: AudioBuffer | null = null;
   private chainsVolumeRef = 0.3;
+  private chainsSpeedFrac = 1.0;                       // current smoothed speed fraction
 
 
   // MP3 one-shot
@@ -207,7 +210,8 @@ class EnemyChannel {
     src.loopEnd = buf.duration;
     src.playbackRate.value = 1.0;
     const g = this.ctx.createGain();
-    g.gain.value = volume;
+    g.gain.value = this.chainsSpeedFrac * volume; // respect current speed
+    this.chainsGain = g;
     src.connect(g).connect(this.panner);
     src.start(0, Math.random() * buf.duration);
     this.chainsLoop = src;
@@ -222,9 +226,9 @@ class EnemyChannel {
     src.loopEnd = this.chainsBufRef.duration;
     src.playbackRate.value = 1.0;
     const g = this.ctx.createGain();
-    g.gain.value = this.chainsVolumeRef;
+    g.gain.value = this.chainsSpeedFrac * this.chainsVolumeRef; // respect current speed
+    this.chainsGain2 = g;
     src.connect(g).connect(this.panner);
-    // Random offset ensures it sounds different from the first loop
     src.start(0, Math.random() * this.chainsBufRef.duration);
     this.chainsLoop2 = src;
   }
@@ -233,7 +237,18 @@ class EnemyChannel {
     if (this.chainsLoop2) {
       try { this.chainsLoop2.stop(); } catch {}
       this.chainsLoop2 = null;
+      this.chainsGain2 = null;
     }
+  }
+
+  /** Scale chains volume by enemy speed fraction (0 = stopped/silent, 1 = full chase speed) */
+  updateChainsSpeed(speedFraction: number) {
+    const TIME_CONST = 0.15; // seconds — smooth fade in/out
+    this.chainsSpeedFrac = speedFraction; // track for when loops are (re)started
+    const target = speedFraction * this.chainsVolumeRef;
+    const now = this.ctx.currentTime;
+    if (this.chainsGain) this.chainsGain.gain.setTargetAtTime(target, now, TIME_CONST);
+    if (this.chainsGain2) this.chainsGain2.gain.setTargetAtTime(target, now, TIME_CONST);
   }
 
   stop() {
@@ -242,6 +257,7 @@ class EnemyChannel {
     if (this.chainsLoop) {
       try { this.chainsLoop.stop(); } catch {}
       this.chainsLoop = null;
+      this.chainsGain = null;
     }
     this.stopChainsLoop2();
     this.currentState = '';
@@ -619,6 +635,11 @@ export class AudioManager {
   /** Stop an enemy channel */
   stopChannel(id: number) {
     this.channels.get(id)?.stop();
+  }
+
+  /** Scale chains volume by enemy movement speed (0 = stopped, 1 = full chase speed). Call every frame. */
+  updateChannelSpeed(id: number, speedFraction: number) {
+    this.channels.get(id)?.updateChainsSpeed(speedFraction);
   }
 
   /** Ensure the chains loop is running for a channel (restarts if killed while off-floor). */

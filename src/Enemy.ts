@@ -28,6 +28,9 @@ const INVESTIGATE_RADIUS   = 8;   // pick cells within this radius of last known
 // Alert system
 const ALERT_RANGE = 30; // world units — other enemies within this get alerted
 
+// Instant chase: if visible AND within this range, no suspicion buildup needed
+const INSTANT_CHASE_RANGE = 6.0; // ~1.5 cells
+
 // Suspicion system
 const SUSPICION_DECAY        = 0.04;  // per second — idle cooldown rate
 const SUSPICION_BUILD_DIRECT = 2.00;  // per second when enemy directly sees player (scales with visibility)
@@ -328,44 +331,57 @@ export class Enemy {
 
     // ── Suspicion update (only while searching — chasing uses its own FSM) ───
     if (this.state === EnemyState.SEARCHING) {
-      let gain = 0;
-      if (canSee) {
-        // Direct visual contact — fast build, min 30% floor even at range edge
-        const distF = 0.3 + 0.7 * Math.max(0, 1 - distToPlayer / effectiveSight);
-        gain += SUSPICION_BUILD_DIRECT * playerVisibility * distF;
-      } else if (inGlowOnly) {
-        // Peripheral awareness: player visible but outside direct sight — slower build
-        const distF = Math.max(0, 1 - distToPlayer / glowRange);
-        gain += SUSPICION_BUILD_GLOW * playerVisibility * distF;
-      }
-      if (canHear) {
-        // Sound: squared distance falloff — independent of light level
-        const f = Math.max(0, 1 - distToPlayer / darkRange);
-        gain += SUSPICION_BUILD_NOISE * playerNoise * f * f;
-      }
-      if (gain > 0) {
-        const prevSuspicion = this.suspicion;
-        this.suspicion = Math.min(1, this.suspicion + gain * dt);
-        if (this.noticeCooldown <= 0 && prevSuspicion < 0.20 && this.suspicion >= 0.20) {
-          this.audio.playChannelNotice(this.channelId);
-          this.noticeCooldown = 12;
-        }
-      } else {
-        this.suspicion = Math.max(0, this.suspicion - SUSPICION_DECAY * dt);
-      }
-      this.noticeCooldown -= dt;
-      if (this.suspicion >= 0.99) {
+      // Instant chase: direct sight at close range — no suspicion buildup needed
+      if (canSee && distToPlayer < INSTANT_CHASE_RANGE) {
         this.suspicion = 1;
         this.state = EnemyState.CHASING;
         this.chaseLockTimer = 1.5;
         this.lastKnownPlayerPos = playerPos.clone();
+        this.investigateWaiting = false;
         this.audio.playChannelState(this.channelId, 'spotted');
         this.alertSiblings(playerPos);
-        console.debug(`[Enemy z${this.patrolZone} f${this.floorIndex}] MAX SUSPICION → CHASING`);
+        console.debug(`[Enemy z${this.patrolZone} f${this.floorIndex}] CLOSE SIGHT → instant chase`);
+      } else {
+        let gain = 0;
+        if (canSee) {
+          // Direct visual contact — fast build, min 30% floor even at range edge
+          const distF = 0.3 + 0.7 * Math.max(0, 1 - distToPlayer / effectiveSight);
+          gain += SUSPICION_BUILD_DIRECT * playerVisibility * distF;
+        } else if (inGlowOnly) {
+          // Peripheral awareness: player visible but outside direct sight — slower build
+          const distF = Math.max(0, 1 - distToPlayer / glowRange);
+          gain += SUSPICION_BUILD_GLOW * playerVisibility * distF;
+        }
+        if (canHear) {
+          // Sound: squared distance falloff — independent of light level
+          const f = Math.max(0, 1 - distToPlayer / darkRange);
+          gain += SUSPICION_BUILD_NOISE * playerNoise * f * f;
+        }
+        if (gain > 0) {
+          const prevSuspicion = this.suspicion;
+          this.suspicion = Math.min(1, this.suspicion + gain * dt);
+          if (this.noticeCooldown <= 0 && prevSuspicion < 0.20 && this.suspicion >= 0.20) {
+            this.audio.playChannelNotice(this.channelId);
+            this.noticeCooldown = 12;
+          }
+        } else {
+          this.suspicion = Math.max(0, this.suspicion - SUSPICION_DECAY * dt);
+        }
+        this.noticeCooldown -= dt;
+        if (this.suspicion >= 0.99) {
+          this.suspicion = 1;
+          this.state = EnemyState.CHASING;
+          this.chaseLockTimer = 1.5;
+          this.lastKnownPlayerPos = playerPos.clone();
+          this.audio.playChannelState(this.channelId, 'spotted');
+          this.alertSiblings(playerPos);
+          console.debug(`[Enemy z${this.patrolZone} f${this.floorIndex}] MAX SUSPICION → CHASING`);
+        }
       }
     }
 
     // ── FSM ──────────────────────────────────────────────────────────────
+    const preMovX = this.pos.x, preMovZ = this.pos.z;
     switch (this.state) {
       case EnemyState.SEARCHING:
         this.audio.playChannelState(this.channelId, 'searching');
@@ -430,6 +446,11 @@ export class Enemy {
         this.doChase(dt, playerPos, speedMult);
         break;
     }
+
+    // ── Chains volume scales with movement speed ─────────────────────────
+    const movedXZ = Math.sqrt((this.pos.x - preMovX) ** 2 + (this.pos.z - preMovZ) ** 2);
+    const chainSpeedFrac = Math.min(1, movedXZ / Math.max(0.0001, dt * BASE_CHASE_SPEED * speedMult));
+    this.audio.updateChannelSpeed(this.channelId, chainSpeedFrac);
 
     // ── Smooth Y over obstacles ──────────────────────────────────────────
     const baseY = this.floorIndex * (WALL_HEIGHT + 1.0);
