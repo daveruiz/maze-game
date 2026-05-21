@@ -1,6 +1,6 @@
 import * as THREE from 'three';
 import { EnemyState, Cell } from './types';
-import { MazeGenerator, CELL_SIZE, WALL_HEIGHT } from './Maze';
+import { MazeGenerator, CELL_SIZE, WALL_HEIGHT, OBSTACLE_HEIGHT } from './Maze';
 import { AudioManager } from './AudioManager';
 
 const BASE_SEARCH_SPEED = 2.5;
@@ -407,6 +407,13 @@ export class Enemy {
         this.doChase(dt, playerPos, speedMult);
         break;
     }
+
+    // ── Smooth Y over obstacles ──────────────────────────────────────────
+    const baseY = this.floorIndex * (WALL_HEIGHT + 1.0);
+    const curCell = this.maze.floors[this.floorIndex]
+      ?.cells[Math.round(this.pos.z / CELL_SIZE)]?.[Math.round(this.pos.x / CELL_SIZE)];
+    const targetY = baseY + (curCell?.hasObstacle ? OBSTACLE_HEIGHT : 0) + 1.28;
+    this.pos.y += (targetY - this.pos.y) * Math.min(1, 8 * dt);
 
     // ── Billboard + directional sprite ──────────────────────────────────
     this.mesh.position.copy(this.pos);
