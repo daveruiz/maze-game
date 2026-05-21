@@ -459,6 +459,9 @@ export class Game {
       return;
     }
 
+    // Decay player audibility from last frame
+    this.audio.tickAudibility(dt);
+
     // Sync virtual controls before player tick (touch + gamepad)
     this.mobileControls?.update();
     this.gamepad.update();
@@ -560,7 +563,7 @@ export class Game {
         enemy.setPlayerHint(pp);
         enemy.setKeyCollected(hasKey === true);
       }
-      const caught = enemy.update(dt, pp, this.player.floorIndex, this.camera, this.playerVisibility, this.player.noiseLevel);
+      const caught = enemy.update(dt, pp, this.player.floorIndex, this.camera, this.playerVisibility, this.audio.playerAudibility);
       if (caught && !caughtBy) {
         caughtBy = enemy;
       }
@@ -778,7 +781,7 @@ export class Game {
       `FLOOR ${fi + 1} / ${NUM_FLOORS}  —  ${this.maze.floors[fi].theme.name.toUpperCase()}`;
 
     // Noise bar (how much sound the player is producing)
-    const noisePct = Math.round(this.player.noiseLevel * 100);
+    const noisePct = Math.round(this.audio.playerAudibility * 100);
     this.noiseFillEl.style.width = `${noisePct}%`;
     this.noiseFillEl.style.background = noisePct > 60 ? '#f44' : noisePct > 20 ? '#fa4' : '#484';
     this.noiseIconEl.textContent = noisePct > 50 ? '🔊' : noisePct > 15 ? '🔉' : '🔇';

@@ -55,16 +55,6 @@ export class Player {
   sprinting = false;
   crouching = false;
 
-  /**
-   * How much noise the player is making (0 = silent, 1 = max).
-   * Enemies use this to detect the player by sound.
-   * 0 = crouching, ~0.3 = walking, ~0.7 = sprinting, 1.0 = landing from jump
-   */
-  noiseLevel = 0;
-  private smoothedNoise = 0;
-  private stepTimer = 0;
-  justStepped = false;
-
   // Head bob
   private bobPhase = 0;         // oscillation phase (radians)
   private bobIntensity = 0;     // smoothed intensity (0 = still, 1 = full bob)
@@ -182,7 +172,6 @@ export class Player {
   update(dt: number): { stairsUp: boolean; stairsDown: boolean; isExit: boolean } {
     this.stairCooldown -= dt;
     this.justJumped  = false;
-    this.justStepped = false;
 
     // ── Crouch, Sprint & stamina ──────────────────────────────────────
     const wantCrouch = !!(this.keys['KeyC'] || this.keys['ControlLeft'] || this.keys['ControlRight']);
@@ -285,41 +274,10 @@ export class Player {
     this.onGround = this.isOnGround;
     this.wasOnGround = this.isOnGround;
 
-    // ── Noise level (for enemy hearing) ─────────────────────────────────
+    // ── Speed tracking ────────────────────────────────────────────────────
     const hSpeed = this.velocity.length();
     this.currentSpeed = hSpeed;
-
-    // Step timer — mirrors AudioManager footstep rhythm so noise pulses with each step
-    const maxSpeed = BASE_SPEED * SPRINT_MULT;
-    const speedT   = Math.min(1, hSpeed / maxSpeed);
-    if (this.isOnGround && hSpeed > 0.3 && !this.crouching) {
-      const stepInterval = 0.5 - speedT * 0.2;
-      this.stepTimer += dt;
-      if (this.stepTimer >= stepInterval) {
-        this.stepTimer -= stepInterval;
-        this.justStepped = true;
-      }
-    } else {
-      this.stepTimer = 0;
-    }
-
-    let targetNoise = 0;
-    if (this.crouching) {
-      targetNoise = 0; // completely silent
-    } else if (this.justLanded) {
-      // Scale with impact energy — a full jump lands at ~sprint level, harder falls go to 1.0
-      targetNoise = Math.min(1, this.landingImpact / 6);
-    } else if (!this.isOnGround) {
-      // Airborne: follow horizontal speed so a sprinting jump stays as loud as sprinting
-      targetNoise = Math.max(0.05, speedT * 0.85);
-    } else if (this.justStepped) {
-      // Each footstep creates a distinct noise spike — sprint = 0.85, walk = 0.3
-      targetNoise = this.sprinting ? 0.85 : 0.3;
-    }
-    // Fast attack so spikes are immediate; slow decay so each spike lingers until the next step
-    const nSmooth = targetNoise > this.smoothedNoise ? 15.0 : 1.5;
-    this.smoothedNoise += (targetNoise - this.smoothedNoise) * Math.min(1, nSmooth * dt);
-    this.noiseLevel = this.smoothedNoise;
+    const speedT = Math.min(1, hSpeed / (BASE_SPEED * SPRINT_MULT));
 
     // Ceiling clamp — prevent jumping through ceiling on floors that have one
     if (floor?.theme.hasCeiling) {

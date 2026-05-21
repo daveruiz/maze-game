@@ -605,6 +605,24 @@ export class AudioManager {
     }
   }
 
+  // ── Player audibility tracking ─────────────────────────────────────────────
+  private _playerAudibility = 0;
+  private static readonly AUDIBILITY_SCALE = 6.0; // maps gain values to 0..1 range
+
+  /** Instant-attack: register a sound at normalized level (0..1). */
+  reportPlayerSound(gain: number) {
+    const level = Math.min(1, gain * AudioManager.AUDIBILITY_SCALE);
+    if (level > this._playerAudibility) this._playerAudibility = level;
+  }
+
+  /** Decay audibility toward zero — call once per frame. */
+  tickAudibility(dt: number) {
+    const DECAY = 3.0; // units/s — fast enough to pulse with footsteps
+    this._playerAudibility = Math.max(0, this._playerAudibility - DECAY * dt);
+  }
+
+  get playerAudibility(): number { return this._playerAudibility; }
+
   // ── Footsteps ──────────────────────────────────────────────────────────
 
   private footstepBuf: AudioBuffer | null = null;
@@ -694,7 +712,9 @@ export class AudioManager {
 
     // Volume scales with speed — louder when sprinting
     const gain = this.ctx.createGain();
-    gain.gain.value = (0.02 + speedT * 0.14) * volumeMult; // 0.02 walk → 0.16 sprint
+    const gainValue = (0.02 + speedT * 0.14) * volumeMult; // 0.02 walk → 0.16 sprint
+    gain.gain.value = gainValue;
+    this.reportPlayerSound(gainValue);
 
     src.connect(gain).connect(panner).connect(this.masterGain);
     src.start();
@@ -1229,6 +1249,7 @@ export class AudioManager {
     src.buffer = buf;
     const g = this.ctx.createGain();
     g.gain.value = 0.03;  // ~5% volume
+    this.reportPlayerSound(0.03);
     src.connect(g).connect(this.masterGain);
     src.start();
   }
