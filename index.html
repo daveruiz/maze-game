@@ -416,9 +416,11 @@
     </div><!-- /ui-root -->
   </div>
   <script>
-    // Scale the UI root to fill the viewport (letterbox/pillarbox).
+    // Scale the UI root to fill the viewport.
+    // The design space fits the tighter dimension (Math.min), then the root expands
+    // to cover the full screen on the unconstrained axis — no bars, no cropping.
     // High-DPR devices with a small CSS viewport (phones/small tablets) get a
-    // 1280×720 design space instead of 1920×1080, so UI elements appear 1.5× larger.
+    // 1280×720 base design space instead of 1920×1080, so UI elements appear 1.5× larger.
     (function () {
       const root = document.getElementById('ui-root');
       function scaleUI() {
@@ -426,12 +428,13 @@
         const smallScreen = dpr >= 2 && Math.min(window.innerWidth, window.innerHeight) < 600;
         const UI_W = smallScreen ? 1280 : 1920;
         const UI_H = smallScreen ? 720  : 1080;
-        root.style.width  = UI_W + 'px';
-        root.style.height = UI_H + 'px';
-        const scale = Math.max(window.innerWidth / UI_W, window.innerHeight / UI_H);
-        const ox = (window.innerWidth  - UI_W * scale) / 2;
-        const oy = (window.innerHeight - UI_H * scale) / 2;
-        root.style.transform = `translate(${ox}px, ${oy}px) scale(${scale})`;
+        const scale = Math.min(window.innerWidth / UI_W, window.innerHeight / UI_H);
+        // Expand to fill the unconstrained axis so the root covers the entire screen.
+        const actualW = window.innerWidth  / scale;
+        const actualH = window.innerHeight / scale;
+        root.style.width  = actualW + 'px';
+        root.style.height = actualH + 'px';
+        root.style.transform = `scale(${scale})`;
       }
       scaleUI();
       window.addEventListener('resize', scaleUI);
