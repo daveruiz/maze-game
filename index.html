@@ -428,7 +428,7 @@
         const UI_H = smallScreen ? 720  : 1080;
         root.style.width  = UI_W + 'px';
         root.style.height = UI_H + 'px';
-        const scale = Math.min(window.innerWidth / UI_W, window.innerHeight / UI_H);
+        const scale = Math.max(window.innerWidth / UI_W, window.innerHeight / UI_H);
         const ox = (window.innerWidth  - UI_W * scale) / 2;
         const oy = (window.innerHeight - UI_H * scale) / 2;
         root.style.transform = `translate(${ox}px, ${oy}px) scale(${scale})`;
