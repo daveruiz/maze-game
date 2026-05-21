@@ -97,6 +97,11 @@ export class Game {
   private visibilityIconEl!:   HTMLElement;
   private noiseFillEl!:        HTMLElement;
   private noiseIconEl!:        HTMLElement;
+  private noiseHudEl!:         HTMLElement;
+  private visibilityHudEl!:    HTMLElement;
+  // Crosshair-adjacent indicators (always visible)
+  private ciVisibilityEl!:     HTMLElement;
+  private ciNoiseEl!:          HTMLElement;
 
   // Unified player visibility (0=dark/hidden, 1=fully lit) — computed each frame
   private playerVisibility = 0;
@@ -162,6 +167,10 @@ export class Game {
     this.visibilityIconEl   = document.getElementById('visibility-icon')!;
     this.noiseFillEl        = document.getElementById('noise-fill')!;
     this.noiseIconEl        = document.getElementById('noise-icon')!;
+    this.noiseHudEl         = document.getElementById('noise-hud')!;
+    this.visibilityHudEl    = document.getElementById('visibility-hud')!;
+    this.ciVisibilityEl     = document.getElementById('ci-visibility')!;
+    this.ciNoiseEl          = document.getElementById('ci-noise')!;
 
     // Debug full-bright light (added to scene on demand)
     this.debugAmbient = new THREE.AmbientLight(0xffffff, 6);
@@ -779,18 +788,21 @@ export class Game {
     this.floorTextEl.textContent =
       `FLOOR ${fi + 1} / ${NUM_FLOORS}  —  ${this.maze.floors[fi].theme.name.toUpperCase()}`;
 
-    // Noise bar (how much sound the player is producing)
+    // Noise / visibility — update fills + debug bar icons, and crosshair indicators
     const noisePct = Math.round(this.audio.playerAudibility * 100);
     this.noiseFillEl.style.width = `${noisePct}%`;
     this.noiseFillEl.style.background = noisePct > 60 ? '#f44' : noisePct > 20 ? '#fa4' : '#484';
-    this.noiseIconEl.style.opacity = String(0.1 + 0.9 * (noisePct / 100));
+    const noiseOpacity = String(0.1 + 0.9 * (noisePct / 100));
+    this.noiseIconEl.style.opacity = noiseOpacity;
+    this.ciNoiseEl.style.opacity = noiseOpacity;
 
-    // Visibility bar (how visible the player is to enemies)
     const visPct = Math.round(this.playerVisibility * 100);
     this.visibilityFillEl.style.width = `${visPct}%`;
     this.visibilityFillEl.style.background =
       visPct > 70 ? '#eee' : visPct > 35 ? '#99c' : '#446';
-    this.visibilityIconEl.style.opacity = String(0.1 + 0.9 * (visPct / 100));
+    const visOpacity = String(0.1 + 0.9 * (visPct / 100));
+    this.visibilityIconEl.style.opacity = visOpacity;
+    this.ciVisibilityEl.style.opacity = visOpacity;
 
     // Battery bar
     const pct = this.flashBattery;
@@ -824,7 +836,11 @@ export class Game {
   }
 
   private updateSuspicionDebug() {
-    if (!this.debugRevealMap) {
+    const debugOn = this.debugRevealMap;
+    this.noiseHudEl.style.display      = debugOn ? 'flex' : 'none';
+    this.visibilityHudEl.style.display = debugOn ? 'flex' : 'none';
+
+    if (!debugOn) {
       this.suspicionDebugEl.style.display = 'none';
       return;
     }
