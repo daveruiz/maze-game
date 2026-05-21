@@ -14,6 +14,7 @@ import { inputMode, isMobileDevice } from './InputMode';
 import { GamepadManager } from './GamepadManager';
 import { distributePositions } from './MapDistribution';
 import soundConfig from './SoundConfig';
+import { computeSoundField, computeSoundEnergies } from './SoundField';
 
 const NUM_FLOORS = 3;
 
@@ -45,6 +46,7 @@ export class Game {
   private debugLight    = false;
   private debugRevealMap = false;
   private debugFastForward = false;
+  private debugSoundField = false;
   private debugAmbient!: THREE.AmbientLight;
   private debugMenuOpen = false;
   private mobileControls: MobileControls | null = null;
@@ -879,7 +881,7 @@ export class Game {
     const cellH = S / H;
     const ctx = this.minimapCtx;
     const has = this.collected[fi] ?? new Set<ItemType>();
-    const hasMap     = has.has('map') || this.debugRevealMap;
+    const hasMap     = has.has('map') || this.debugRevealMap || this.debugSoundField;
     const hasCompass = has.has('compass') || this.debugRevealMap;
 
     ctx.clearRect(0, 0, S, S);
@@ -901,6 +903,30 @@ export class Game {
           }
         }
       }
+      // Sound field heatmap — drawn between solid-cell fill and wall segments
+      // so walls render on top and remain readable.
+      if (this.debugSoundField) {
+        const enemyColors = ['#00ffcc', '#ff66ff', '#ffcc00', '#88ff44'];
+        let ei = 0;
+        for (const enemy of this.enemies) {
+          if (enemy.floorIndex !== fi) { ei++; continue; }
+          const ep = enemy.getPosition();
+          const ec = this.maze.worldToCell(ep.x, ep.z, fi);
+          const energies = computeSoundEnergies(floor, ec.x, ec.z);
+          ctx.fillStyle = enemyColors[ei % enemyColors.length];
+          for (let ez = 0; ez < H; ez++) {
+            for (let ex = 0; ex < W; ex++) {
+              const e = energies[ez * W + ex];
+              if (e < 0.01) continue;
+              ctx.globalAlpha = e * 0.6;
+              ctx.fillRect(ex * cellW, ez * cellH, cellW + 0.5, cellH + 0.5);
+            }
+          }
+          ei++;
+        }
+        ctx.globalAlpha = 1.0;
+      }
+
       // Second pass: draw individual wall segments (for thin-wall mazes)
       ctx.strokeStyle = '#556';
       ctx.lineWidth = Math.max(0.5, Math.min(cellW, cellH) * 0.3);
@@ -994,6 +1020,34 @@ export class Game {
           ctx.stroke();
           ctx.globalAlpha = 1.0;
         }
+      }
+
+      // Sound field: direction arrows at the player's cell (one per enemy)
+      if (this.debugSoundField) {
+        const pp = this.player.getPosition();
+        const pc = this.maze.worldToCell(pp.x, pp.z, fi);
+        const px = pc.x * cellW + cellW / 2;
+        const pz = pc.z * cellH + cellH / 2;
+        const arrowLen = Math.min(cellW, cellH) * 2.5;
+        const enemyColors = ['#00ffcc', '#ff66ff', '#ffcc00', '#88ff44'];
+        let ei = 0;
+        for (const enemy of this.enemies) {
+          if (enemy.floorIndex !== fi) { ei++; continue; }
+          const ep = enemy.getPosition();
+          const ec = this.maze.worldToCell(ep.x, ep.z, fi);
+          const sf = computeSoundField(floor, ec.x, ec.z, pc.x, pc.z);
+          if (sf.energy > 0.01 && (sf.dirX !== 0 || sf.dirZ !== 0)) {
+            ctx.strokeStyle = enemyColors[ei % enemyColors.length];
+            ctx.lineWidth = 1.5;
+            ctx.globalAlpha = 0.5 + sf.confidence * 0.5; // bolder when more directional
+            ctx.beginPath();
+            ctx.moveTo(px, pz);
+            ctx.lineTo(px + sf.dirX * arrowLen, pz + sf.dirZ * arrowLen);
+            ctx.stroke();
+          }
+          ei++;
+        }
+        ctx.globalAlpha = 1.0;
       }
 
       // Stairs / exit markers (show as blinking targets even without map)
@@ -1100,6 +1154,12 @@ export class Game {
     const revealCb = document.getElementById('dbg-revealmap') as HTMLInputElement;
     revealCb.addEventListener('change', () => {
       this.debugRevealMap = revealCb.checked;
+    });
+
+    // Sound field heatmap overlay
+    const sfCb = document.getElementById('dbg-soundfield') as HTMLInputElement;
+    sfCb.addEventListener('change', () => {
+      this.debugSoundField = sfCb.checked;
     });
 
     // Pixel scale buttons (resolution downscale for performance)

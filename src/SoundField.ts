@@ -28,28 +28,15 @@ const ENERGY_DECAY = 0.10; // energy(cost) = exp(-cost * DECAY)
  * low when energy arrives equally from several directions — use it to drive the
  * dry/wet (directional vs reverb) balance.
  */
-export function computeSoundField(
-  floor: MazeFloor,
-  srcX: number, srcZ: number,
-  playerX: number, playerZ: number,
-): SoundFieldResult {
+/** Dijkstra flood-fill from (srcX, srcZ) — open corridors only, walls opaque.
+ *  Returns Float32Array[W*H] of step-costs; unreachable cells have cost > MAX_COST. */
+function buildCostMap(floor: MazeFloor, srcX: number, srcZ: number): Float32Array {
   const W = floor.width, H = floor.height;
-
-  if (srcX < 0 || srcX >= W || srcZ < 0 || srcZ >= H ||
-      playerX < 0 || playerX >= W || playerZ < 0 || playerZ >= H) {
-    return { dirX: 0, dirZ: 0, confidence: 0, energy: 0, wallCrossings: 0 };
-  }
-
-  const sz   = W * H;
-  const cost = new Float32Array(sz).fill(MAX_COST + 1);
+  const cost = new Float32Array(W * H).fill(MAX_COST + 1);
   const idx  = (x: number, z: number) => z * W + x;
-
   cost[idx(srcX, srcZ)] = 0;
 
-  // Dial's algorithm: bucket queue indexed by integer cost.
-  // Edge cost is 1 per open step; walls are fully opaque (skipped).
-  // O(MAX_COST + V) — much faster than heap-based Dijkstra for this graph.
-  type Entry = [number, number]; // x, z
+  type Entry = [number, number];
   const buckets: Entry[][] = Array.from({ length: MAX_COST + 1 }, () => []);
   buckets[0].push([srcX, srcZ]);
 
@@ -57,8 +44,7 @@ export function computeSoundField(
     const bucket = buckets[c];
     for (let bi = 0; bi < bucket.length; bi++) {
       const [x, z] = bucket[bi];
-      if (c > cost[idx(x, z)]) continue; // stale entry
-
+      if (c > cost[idx(x, z)]) continue;
       const cell = floor.cells[z]?.[x];
       if (!cell) continue;
 
@@ -74,13 +60,46 @@ export function computeSoundField(
         const nc = c + 1;
         if (nc > MAX_COST) continue;
         const ni = idx(nx, nz);
-        if (nc < cost[ni]) {
-          cost[ni] = nc;
-          buckets[nc].push([nx, nz]);
-        }
+        if (nc < cost[ni]) { cost[ni] = nc; buckets[nc].push([nx, nz]); }
       }
     }
   }
+  return cost;
+}
+
+/**
+ * Returns a Float32Array[W*H] with energy values 0–1 for every cell.
+ * energy[z*W+x] = exp(-cost * ENERGY_DECAY), 0 when unreachable.
+ * Useful for minimap heat-map visualization of the sound propagation field.
+ */
+export function computeSoundEnergies(
+  floor: MazeFloor,
+  srcX: number, srcZ: number,
+): Float32Array {
+  const W = floor.width, H = floor.height;
+  if (srcX < 0 || srcX >= W || srcZ < 0 || srcZ >= H)
+    return new Float32Array(W * H);
+  const cost = buildCostMap(floor, srcX, srcZ);
+  const out  = new Float32Array(W * H);
+  for (let i = 0; i < cost.length; i++)
+    out[i] = cost[i] > MAX_COST ? 0 : Math.exp(-cost[i] * ENERGY_DECAY);
+  return out;
+}
+
+export function computeSoundField(
+  floor: MazeFloor,
+  srcX: number, srcZ: number,
+  playerX: number, playerZ: number,
+): SoundFieldResult {
+  const W = floor.width, H = floor.height;
+
+  if (srcX < 0 || srcX >= W || srcZ < 0 || srcZ >= H ||
+      playerX < 0 || playerX >= W || playerZ < 0 || playerZ >= H) {
+    return { dirX: 0, dirZ: 0, confidence: 0, energy: 0, wallCrossings: 0 };
+  }
+
+  const cost = buildCostMap(floor, srcX, srcZ);
+  const idx  = (x: number, z: number) => z * W + x;
 
   // Attenuation at the player's cell (walls = 0 crossings by definition now)
   const pi     = idx(playerX, playerZ);
