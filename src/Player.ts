@@ -289,7 +289,8 @@ export class Player {
     if (this.crouching) {
       targetNoise = 0; // completely silent
     } else if (this.justLanded) {
-      targetNoise = Math.min(1, this.landingImpact / 10); // landing spike
+      // Scale with impact energy — a full jump lands at ~sprint level, harder falls go to 1.0
+      targetNoise = Math.min(1, this.landingImpact / 6);
     } else if (!this.isOnGround) {
       targetNoise = 0.05; // airborne — nearly silent
     } else if (this.sprinting) {
@@ -297,8 +298,8 @@ export class Player {
     } else if (hSpeed > 0.3) {
       targetNoise = 0.3; // walking
     }
-    // Smooth noise (fast attack, slower decay so landing spikes linger briefly)
-    const nSmooth = targetNoise > this.smoothedNoise ? 15.0 : 3.0;
+    // Fast attack; landing spikes decay slowly so enemies have time to react (~1s at full impact)
+    const nSmooth = targetNoise > this.smoothedNoise ? 15.0 : 1.5;
     this.smoothedNoise += (targetNoise - this.smoothedNoise) * Math.min(1, nSmooth * dt);
     this.noiseLevel = this.smoothedNoise;
 

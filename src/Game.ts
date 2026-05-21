@@ -95,6 +95,8 @@ export class Game {
   private suspicionDebugEl!:   HTMLElement;
   private visibilityFillEl!:   HTMLElement;
   private visibilityIconEl!:   HTMLElement;
+  private noiseFillEl!:        HTMLElement;
+  private noiseIconEl!:        HTMLElement;
 
   // Unified player visibility (0=dark/hidden, 1=fully lit) — computed each frame
   private playerVisibility = 0;
@@ -158,6 +160,8 @@ export class Game {
     this.suspicionDebugEl   = document.getElementById('suspicion-debug')!;
     this.visibilityFillEl   = document.getElementById('visibility-fill')!;
     this.visibilityIconEl   = document.getElementById('visibility-icon')!;
+    this.noiseFillEl        = document.getElementById('noise-fill')!;
+    this.noiseIconEl        = document.getElementById('noise-icon')!;
 
     // Debug full-bright light (added to scene on demand)
     this.debugAmbient = new THREE.AmbientLight(0xffffff, 6);
@@ -772,6 +776,12 @@ export class Game {
     const fi = this.player.floorIndex;
     this.floorTextEl.textContent =
       `FLOOR ${fi + 1} / ${NUM_FLOORS}  —  ${this.maze.floors[fi].theme.name.toUpperCase()}`;
+
+    // Noise bar (how much sound the player is producing)
+    const noisePct = Math.round(this.player.noiseLevel * 100);
+    this.noiseFillEl.style.width = `${noisePct}%`;
+    this.noiseFillEl.style.background = noisePct > 60 ? '#f44' : noisePct > 20 ? '#fa4' : '#484';
+    this.noiseIconEl.textContent = noisePct > 50 ? '🔊' : noisePct > 15 ? '🔉' : '🔇';
 
     // Visibility bar (how visible the player is to enemies)
     const visPct = Math.round(this.playerVisibility * 100);
