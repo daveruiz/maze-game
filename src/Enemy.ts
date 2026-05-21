@@ -329,8 +329,16 @@ export class Enemy {
     // ── Suspicion update (only while searching — chasing uses its own FSM) ───
     if (this.state === EnemyState.SEARCHING) {
       let gain = 0;
-      if (flashlightVisible) gain += SUSPICION_BUILD_SIGHT;
-      if (canHear)           gain += SUSPICION_BUILD_NOISE * playerNoise;
+      if (flashlightVisible) {
+        // Flashlight: full gain up close, squared falloff to zero at 1.5× sight range
+        const f = Math.max(0, 1 - distToPlayer / (SIGHT_RANGE * 1.5));
+        gain += SUSPICION_BUILD_SIGHT * f * f;
+      }
+      if (canHear) {
+        // Hearing: squared distance falloff within the current dark range
+        const f = Math.max(0, 1 - distToPlayer / darkRange);
+        gain += SUSPICION_BUILD_NOISE * playerNoise * f * f;
+      }
       if (gain > 0) {
         this.suspicion = Math.min(1, this.suspicion + gain * dt);
       } else {

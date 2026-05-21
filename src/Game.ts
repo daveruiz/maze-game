@@ -799,20 +799,16 @@ export class Game {
     for (let i = 0; i < floorEnemies.length; i++) {
       const e = floorEnemies[i];
       const pct = Math.round(e.suspicion * 100);
-      const barColor = pct >= 80 ? '#f44' : pct >= 40 ? '#fa4' : '#4af';
-      const stateColor =
+      const fillColor = pct >= 80 ? '#f44' : pct >= 40 ? '#fa4' : '#4af';
+      const iconColor =
         e.state === EnemyState.CHASING ? '#f44' :
         e.state === EnemyState.SPOTTED ? '#f80' :
-        e.suspicion > 0.6             ? '#fa4' : '#666';
-      const stateText =
-        e.state === EnemyState.CHASING ? 'CHASE' :
-        e.state === EnemyState.SPOTTED ? 'SPOT!' :
-        e.suspicion > 0.6             ? 'ALRT'  : '';
-      html += `<div class="sd-row">` +
-        `<span class="sd-id">E${i}</span>` +
-        `<div class="sd-track"><div class="sd-fill" style="width:${pct}%;background:${barColor}"></div></div>` +
-        `<span class="sd-state" style="color:${stateColor}">${stateText}</span>` +
-        `</div>`;
+        e.suspicion > 0.6             ? '#fa4' : '#888';
+      html += `<div class="hud-bar">` +
+        `<span class="hud-bar-icon" style="color:${iconColor}">E${i}</span>` +
+        `<div class="hud-bar-track">` +
+        `<div class="hud-bar-fill" style="width:${pct}%;background:${fillColor}"></div>` +
+        `</div></div>`;
     }
     this.suspicionDebugEl.innerHTML = html;
   }

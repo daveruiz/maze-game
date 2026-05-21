@@ -276,41 +276,38 @@
       border-top: 1px solid rgba(255,255,255,0.1);
       padding-top: 8px;
     }
-    /* ── Suspicion debug panel ────────────────────── */
-    #suspicion-debug {
-      background: rgba(0,0,0,0.5);
-      border-radius: 4px;
-      padding: 4px 8px;
-      font-size: 11px;
-      display: flex;
-      flex-direction: column;
-      gap: 4px;
-    }
-    .sd-row {
+    /* ── Shared HUD bar component (battery + suspicion rows) ─────────── */
+    .hud-bar {
       display: flex;
       align-items: center;
-      gap: 6px;
+      gap: 1vw;
+      background: rgba(0,0,0,0.5);
+      border-radius: 4px;
+      padding: 1vh 2vw;
     }
-    .sd-row .sd-id {
-      color: #888;
-      font-size: 10px;
-      width: 18px;
+    .hud-bar-icon {
+      font-size: clamp(18px, 3vw, 36px);
+      line-height: 1;
+      min-width: 1.2em;
+      text-align: center;
     }
-    .sd-row .sd-track {
-      width: clamp(50px, 10vw, 100px);
-      height: clamp(4px, 0.8vh, 8px);
-      background: rgba(255,255,255,0.1);
-      border-radius: 3px;
+    .hud-bar-track {
+      width: clamp(60px, 12vw, 140px);
+      height: clamp(6px, 1.2vh, 14px);
+      background: rgba(255,255,255,0.15);
+      border-radius: 4px;
       overflow: hidden;
     }
-    .sd-row .sd-fill {
+    .hud-bar-fill {
       height: 100%;
-      border-radius: 3px;
+      border-radius: 4px;
       transition: width 0.2s, background 0.2s;
     }
-    .sd-row .sd-state {
-      font-size: 9px;
-      letter-spacing: 1px;
+    /* ── Suspicion debug panel ────────────────────── */
+    #suspicion-debug {
+      display: none;
+      flex-direction: column;
+      gap: 4px;
     }
 
     /* ── Mobile responsive overrides ─────────────── */
@@ -356,11 +353,11 @@
         </div>
       </div>
       <div id="battery-low" style="position:absolute;bottom:40%;left:50%;transform:translateX(-50%);font-size:1.7rem;color:#f44;letter-spacing:2px;font-weight:bold;text-shadow:0 0 10px #f44;opacity:0;transition:opacity 0.3s;pointer-events:none;">🔋 LOW BATTERY</div>
-      <div id="suspicion-debug" style="display:none;position:absolute;bottom:calc(3vh + clamp(32px,6vh,56px) + 10px);left:3vw;pointer-events:none;"></div>
-      <div id="battery-hud" style="position:absolute;bottom:3vh;left:3vw;display:flex;align-items:center;gap:1vw;background:rgba(0,0,0,0.5);border-radius:4px;padding:1vh 2vw;">
-        <span id="battery-icon" style="font-size:clamp(18px, 3vw, 36px);">🔦</span>
-        <div style="width:clamp(60px, 12vw, 140px);height:clamp(6px, 1.2vh, 14px);background:rgba(255,255,255,0.15);border-radius:4px;overflow:hidden;">
-          <div id="battery-fill" style="height:100%;width:100%;background:#4af;transition:width 0.3s,background 0.3s;border-radius:4px;"></div>
+      <div id="suspicion-debug" style="position:absolute;bottom:calc(3vh + clamp(32px,6vh,56px) + 10px);left:3vw;pointer-events:none;"></div>
+      <div id="battery-hud" class="hud-bar" style="position:absolute;bottom:3vh;left:3vw;">
+        <span id="battery-icon" class="hud-bar-icon">🔦</span>
+        <div class="hud-bar-track">
+          <div id="battery-fill" class="hud-bar-fill" style="width:100%;background:#4af;"></div>
         </div>
       </div>
       <div id="items-hud">
