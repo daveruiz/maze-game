@@ -276,6 +276,25 @@
       border-top: 1px solid rgba(255,255,255,0.1);
       padding-top: 8px;
     }
+    /* ── Suspicion debug panel ────────────────────── */
+    #suspicion-debug {
+      background: rgba(0,0,0,0.75);
+      border: 1px solid rgba(255,200,60,0.3);
+      border-radius: 4px;
+      padding: 5px 8px;
+      font-family: monospace;
+      font-size: 11px;
+      line-height: 1.7;
+      white-space: pre;
+    }
+    #suspicion-debug .sd-label {
+      color: rgba(255,200,60,0.6);
+      font-size: 9px;
+      letter-spacing: 2px;
+      text-transform: uppercase;
+      margin-bottom: 2px;
+    }
+
     /* ── Mobile responsive overrides ─────────────── */
     @media (max-width: 768px) {
       #overlay {
@@ -319,6 +338,7 @@
         </div>
       </div>
       <div id="battery-low" style="position:absolute;bottom:40%;left:50%;transform:translateX(-50%);font-size:1.7rem;color:#f44;letter-spacing:2px;font-weight:bold;text-shadow:0 0 10px #f44;opacity:0;transition:opacity 0.3s;pointer-events:none;">🔋 LOW BATTERY</div>
+      <div id="suspicion-debug" style="display:none;position:absolute;bottom:calc(3vh + clamp(32px,6vh,56px) + 10px);left:3vw;pointer-events:none;"></div>
       <div id="battery-hud" style="position:absolute;bottom:3vh;left:3vw;display:flex;align-items:center;gap:1vw;background:rgba(0,0,0,0.5);border-radius:4px;padding:1vh 2vw;">
         <span id="battery-icon" style="font-size:clamp(18px, 3vw, 36px);">🔦</span>
         <div style="width:clamp(60px, 12vw, 140px);height:clamp(6px, 1.2vh, 14px);background:rgba(255,255,255,0.15);border-radius:4px;overflow:hidden;">

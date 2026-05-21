@@ -92,6 +92,7 @@ export class Game {
   private itemCompassEl!:    HTMLElement;
   private keyNeededEl!:      HTMLElement;
   private staminaFillEl!:    HTMLElement;
+  private suspicionDebugEl!: HTMLElement;
 
   constructor(container: HTMLElement) {
     this.renderer = new THREE.WebGLRenderer({ antialias: false });
@@ -148,7 +149,8 @@ export class Game {
     this.itemMapEl     = document.getElementById('item-map')!;
     this.itemCompassEl = document.getElementById('item-compass')!;
     this.keyNeededEl   = document.getElementById('key-needed')!;
-    this.staminaFillEl = document.getElementById('stamina-fill')!;
+    this.staminaFillEl    = document.getElementById('stamina-fill')!;
+    this.suspicionDebugEl = document.getElementById('suspicion-debug')!;
 
     // Debug full-bright light (added to scene on demand)
     this.debugAmbient = new THREE.AmbientLight(0xffffff, 6);
@@ -777,6 +779,38 @@ export class Game {
 
     this.updateItemsHUD();
     this.drawMinimap();
+    this.updateSuspicionDebug();
+  }
+
+  private updateSuspicionDebug() {
+    if (!this.debugRevealMap) {
+      this.suspicionDebugEl.style.display = 'none';
+      return;
+    }
+    const fi = this.player.floorIndex;
+    const floorEnemies = this.enemies.filter(e => e.homeFloor === fi);
+    if (floorEnemies.length === 0) {
+      this.suspicionDebugEl.style.display = 'none';
+      return;
+    }
+    this.suspicionDebugEl.style.display = 'block';
+
+    const BAR = 10;
+    let html = '<div class="sd-label">SUSPICION</div>';
+    for (let i = 0; i < floorEnemies.length; i++) {
+      const e = floorEnemies[i];
+      const pct = Math.round(e.suspicion * 100);
+      const filled = Math.round(e.suspicion * BAR);
+      const bar = '█'.repeat(filled) + '░'.repeat(BAR - filled);
+      const stateLabel =
+        e.state === EnemyState.CHASING  ? '<span style="color:#f44">CHASE</span>' :
+        e.state === EnemyState.SPOTTED  ? '<span style="color:#f80">SPOT!</span>'  :
+        e.suspicion > 0.6               ? '<span style="color:#fa4">ALRT </span>'  :
+                                          '<span style="color:#888">srch </span>';
+      const barColor = pct >= 80 ? '#f44' : pct >= 40 ? '#fa4' : '#4af';
+      html += `<div>E${i} <span style="color:${barColor}">${bar}</span> ${String(pct).padStart(3)}% ${stateLabel}</div>`;
+    }
+    this.suspicionDebugEl.innerHTML = html;
   }
 
   private drawMinimap() {
