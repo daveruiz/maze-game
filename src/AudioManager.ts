@@ -94,9 +94,11 @@ class EnemyChannel {
     this.panner.connect(this.wetGain).connect(reverbBus);
   }
 
-  /** Update occlusion based on distance + wall count between player and enemy.
-   *  Walls add muffle (low-pass) + push dry→wet. Distance also contributes. */
-  updateOcclusion(dist: number, wallCount: number) {
+  /** Update occlusion based on distance, wall count, and directionality confidence.
+   *  Walls add muffle (low-pass) + push dry→wet. Distance also contributes.
+   *  confidence: 1 = single clear direction (directional), 0 = sound arriving
+   *  equally from all sides (diffuse) → extra reverb, less dry. */
+  updateOcclusion(dist: number, wallCount: number, confidence = 1.0) {
     const SMOOTH = 0.08; // lerp speed per call (~frame rate)
 
     // ── Distance contribution ──
@@ -109,14 +111,15 @@ class EnemyChannel {
     // Combined occlusion factor (walls dominate, distance adds to it)
     const occlusion = Math.min(1, wallT * 0.7 + distT * 0.4);
 
-    // Dry/wet: more occlusion = less dry, more reverb
-    // Direct line of sight (no walls) gets a 20% presence boost
+    // Dry/wet: more occlusion = less dry, more reverb.
+    // Confidence modulates the dry level: low confidence (diffuse arrival from
+    // many corridors) adds reverb and reduces the directional dry component.
     const directBoost = wallCount === 0 ? 1.2 : 1.0;
-    const targetDry = (1.0 - occlusion * 0.75) * directBoost;     // 1.2 → 0.25
-    const targetWet = 0.1 + occlusion * 1.2;       // 0.1 → 1.3
+    const confScale   = 0.45 + confidence * 0.55; // 0.45 fully diffuse → 1.0 directional
+    const targetDry   = (1.0 - occlusion * 0.75) * directBoost * confScale;
+    const targetWet   = 0.1 + occlusion * 1.2 + (1.0 - confidence) * 0.5; // extra reverb when diffuse
 
     // Low-pass cutoff: walls muffle high frequencies
-    // 0 walls = 20kHz (open), 6+ walls = ~800Hz (very muffled)
     const targetCutoff = 20000 * Math.pow(0.25, wallT); // exponential: 20k → ~1.25k
 
     // Smooth toward targets
@@ -598,9 +601,9 @@ export class AudioManager {
     this.channels.get(id)?.setPosition(x, y, z);
   }
 
-  /** Update per-enemy sound occlusion (distance + wall count → reverb mix + muffle) */
-  updateChannelOcclusion(id: number, dist: number, wallCount: number) {
-    this.channels.get(id)?.updateOcclusion(dist, wallCount);
+  /** Update per-enemy sound occlusion (distance + wall count + confidence → reverb mix + muffle) */
+  updateChannelOcclusion(id: number, dist: number, wallCount: number, confidence = 1.0) {
+    this.channels.get(id)?.updateOcclusion(dist, wallCount, confidence);
   }
 
   /** Update rear-source attenuation for a channel (0=front, 1=behind) */

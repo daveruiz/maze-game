@@ -2,6 +2,7 @@ import * as THREE from 'three';
 import { EnemyState, Cell } from './types';
 import { MazeGenerator, CELL_SIZE, WALL_HEIGHT, OBSTACLE_HEIGHT } from './Maze';
 import { AudioManager } from './AudioManager';
+import { computeSoundField } from './SoundField';
 
 const BASE_SEARCH_SPEED = 2.5;
 const BASE_CHASE_SPEED  = 5.0;
@@ -81,9 +82,10 @@ export class Enemy {
   // Track last patrol target to ensure diversity (go far from where we just were)
   private lastPatrolCell: { x: number; z: number } | null = null;
 
-  // Sound occlusion — cached BFS results for audio direction + wall count
+  // Sound propagation — cached field result for audio direction, occlusion, confidence
   private soundOcclusionTimer = 0;
   private soundWallCount = 0;
+  private soundConfidence = 1.0;
   private soundVirtualPos: THREE.Vector3 = new THREE.Vector3();
 
   private noticeCooldown = 0;
@@ -447,7 +449,7 @@ export class Enemy {
       this.channelId,
       this.soundVirtualPos.x, this.soundVirtualPos.y, this.soundVirtualPos.z
     );
-    this.audio.updateChannelOcclusion(this.channelId, distToPlayer, this.soundWallCount);
+    this.audio.updateChannelOcclusion(this.channelId, distToPlayer, this.soundWallCount, this.soundConfidence);
 
     // Rear-source attenuation: dot product of player forward vs direction to sound source
     // rearFactor: 0 = sound in front, 1 = sound directly behind
@@ -469,135 +471,42 @@ export class Enemy {
     return distToPlayer < CATCH_DISTANCE;
   }
 
-  /** Compute BFS-based sound occlusion: wall count + arrival direction.
-   *  The virtual sound position is placed in the direction of the first BFS step
-   *  (the corridor opening the sound travels through), at the real distance. */
+  /** Compute sound propagation from this enemy to the player using a wall-leaking
+   *  Dijkstra flood-fill. Direction is derived from the cost gradient at the player's
+   *  cell — neighbors with lower cost are upstream toward the source. Multiple arriving
+   *  corridors are automatically blended, and the gradient magnitude gives directionality
+   *  confidence (low = diffuse, used to push toward reverb in AudioManager). */
   private updateSoundOcclusion(playerPos: THREE.Vector3) {
-    const fi = this.floorIndex;
+    const fi    = this.floorIndex;
     const floor = this.maze.floors[fi];
     if (!floor) {
       this.soundVirtualPos.copy(this.pos);
-      this.soundWallCount = 0;
+      this.soundWallCount  = 0;
+      this.soundConfidence = 1;
       return;
     }
 
     const playerCell = this.maze.worldToCell(playerPos.x, playerPos.z, fi);
-    const enemyCell = this.maze.worldToCell(this.pos.x, this.pos.z, fi);
+    const enemyCell  = this.maze.worldToCell(this.pos.x,  this.pos.z,  fi);
 
-    // Quick BFS from player to enemy — we need the path to count walls
-    // and get the first step direction
-    const W = floor.width, H = floor.height;
-    const inBounds = (x: number, z: number) => x >= 0 && x < W && z >= 0 && z < H;
-    type Node = { x: number; z: number; parent: Node | null };
-    const visited = new Set<string>();
-    const queue: Node[] = [{ x: playerCell.x, z: playerCell.z, parent: null }];
-    visited.add(`${playerCell.x},${playerCell.z}`);
-    let found: Node | null = null;
+    const result = computeSoundField(
+      floor,
+      enemyCell.x,  enemyCell.z,
+      playerCell.x, playerCell.z,
+    );
 
-    while (queue.length > 0) {
-      const cur = queue.shift()!;
-      if (cur.x === enemyCell.x && cur.z === enemyCell.z) {
-        found = cur;
-        break;
-      }
-      const cell = floor.cells[cur.z]?.[cur.x];
-      if (!cell) continue;
+    this.soundWallCount  = result.wallCrossings;
+    this.soundConfidence = result.confidence;
 
-      // A passage exists only when NEITHER side has a wall (mirrors renderer logic)
-      const neighbors: { x: number; z: number }[] = [];
-      if (inBounds(cur.x, cur.z - 1) && !cell.walls.N && !floor.cells[cur.z - 1]?.[cur.x]?.walls.S) neighbors.push({ x: cur.x, z: cur.z - 1 });
-      if (inBounds(cur.x, cur.z + 1) && !cell.walls.S && !floor.cells[cur.z + 1]?.[cur.x]?.walls.N) neighbors.push({ x: cur.x, z: cur.z + 1 });
-      if (inBounds(cur.x + 1, cur.z) && !cell.walls.E && !floor.cells[cur.z]?.[cur.x + 1]?.walls.W) neighbors.push({ x: cur.x + 1, z: cur.z });
-      if (inBounds(cur.x - 1, cur.z) && !cell.walls.W && !floor.cells[cur.z]?.[cur.x - 1]?.walls.E) neighbors.push({ x: cur.x - 1, z: cur.z });
-
-      for (const n of neighbors) {
-        const key = `${n.x},${n.z}`;
-        if (!visited.has(key)) {
-          visited.add(key);
-          queue.push({ ...n, parent: cur });
-        }
-      }
-    }
-
-    if (!found) {
-      // No path — use direct position (enemy might be unreachable)
-      this.soundVirtualPos.copy(this.pos);
-      this.soundWallCount = 10; // max muffle
-      return;
-    }
-
-    // Trace back the path to count walls crossed and get the first step
-    const pathCells: { x: number; z: number }[] = [];
-    let node: Node | null = found;
-    while (node) {
-      pathCells.unshift({ x: node.x, z: node.z });
-      node = node.parent;
-    }
-
-    // Count wall crossings along the DIRECT line (not BFS path)
-    // This tells us how many walls the sound actually has to go through
-    let wallCount = 0;
-    const dx = this.pos.x - playerPos.x;
-    const dz = this.pos.z - playerPos.z;
-    const directDist = Math.sqrt(dx * dx + dz * dz);
-    if (directDist > 0.5) {
-      const stepSize = CELL_SIZE * 0.45;
-      const steps = Math.ceil(directDist / stepSize);
-      let prevCX = Math.round(playerPos.x / CELL_SIZE);
-      let prevCZ = Math.round(playerPos.z / CELL_SIZE);
-      for (let i = 1; i <= steps; i++) {
-        const t = i / steps;
-        const px = playerPos.x + dx * t;
-        const pz = playerPos.z + dz * t;
-        const cx = Math.round(px / CELL_SIZE);
-        const cz = Math.round(pz / CELL_SIZE);
-        if (cx !== prevCX || cz !== prevCZ) {
-          if (cx >= 0 && cx < W && cz >= 0 && cz < H) {
-            const prevCell = floor.cells[prevCZ]?.[prevCX];
-            const curCell = floor.cells[cz]?.[cx];
-            if (prevCell && curCell) {
-              if (cx > prevCX && (prevCell.walls.E || curCell.walls.W)) wallCount++;
-              if (cx < prevCX && (prevCell.walls.W || curCell.walls.E)) wallCount++;
-              if (cz > prevCZ && (prevCell.walls.S || curCell.walls.N)) wallCount++;
-              if (cz < prevCZ && (prevCell.walls.N || curCell.walls.S)) wallCount++;
-            }
-          }
-          prevCX = cx;
-          prevCZ = cz;
-        }
-      }
-    }
-    this.soundWallCount = wallCount;
-
-    // Direct visibility shortcut: no walls between player and enemy,
-    // skip BFS direction approximation and use the real enemy position
-    if (wallCount === 0) {
-      this.soundVirtualPos.copy(this.pos);
-      return;
-    }
-
-    // Determine sound arrival direction from the first 1-2 BFS steps
-    // This is the corridor opening the sound comes through
     const realDist = this.pos.distanceTo(playerPos);
-    if (pathCells.length >= 2) {
-      // Get the direction from player toward the first BFS step
-      const step = pathCells.length >= 3 ? pathCells[2] : pathCells[1];
-      const stepWorld = this.maze.cellToWorld(step.x, step.z, fi);
-      const dirX = stepWorld.x - playerPos.x;
-      const dirZ = stepWorld.z - playerPos.z;
-      const dirLen = Math.sqrt(dirX * dirX + dirZ * dirZ);
-      if (dirLen > 0.01) {
-        // Place virtual source in the arrival direction, at the real distance
-        this.soundVirtualPos.set(
-          playerPos.x + (dirX / dirLen) * realDist,
-          this.pos.y,
-          playerPos.z + (dirZ / dirLen) * realDist
-        );
-      } else {
-        this.soundVirtualPos.copy(this.pos);
-      }
+    if (result.dirX !== 0 || result.dirZ !== 0) {
+      this.soundVirtualPos.set(
+        playerPos.x + result.dirX * realDist,
+        this.pos.y,
+        playerPos.z + result.dirZ * realDist,
+      );
     } else {
-      // Same cell or adjacent — use real position
+      // Source and player in same cell, or unreachable — use real position
       this.soundVirtualPos.copy(this.pos);
     }
   }
