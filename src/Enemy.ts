@@ -55,6 +55,7 @@ export class Enemy {
   private pathTimer = 0;
   private searchTarget: THREE.Vector3 | null = null;
   private searchTimer = 0;
+  private chaseLockTimer = 0; // grace period preventing immediate lose after entering chase
 
   private lastKnownPlayerPos: THREE.Vector3 | null = null;
 
@@ -340,8 +341,10 @@ export class Enemy {
       } else {
         this.suspicion = Math.max(0, this.suspicion - SUSPICION_DECAY * dt);
       }
-      if (this.suspicion >= 1.0) {
+      if (this.suspicion >= 0.99) {
+        this.suspicion = 1;
         this.state = EnemyState.CHASING;
+        this.chaseLockTimer = 1.5;
         this.lastKnownPlayerPos = playerPos.clone();
         this.audio.playChannelState(this.channelId, 'spotted');
         this.alertSiblings(playerPos);
@@ -376,12 +379,13 @@ export class Enemy {
 
       case EnemyState.CHASING:
         this.audio.playChannelState(this.channelId, 'chasing');
-        if (canSee || canHear) {
+        if (canSee || canHear || flashlightVisible) {
           this.lastKnownPlayerPos = playerPos.clone();
         }
 
+        this.chaseLockTimer -= dt;
         const effectiveLoseRange = flashlightOn ? LOSE_RANGE : LOSE_RANGE_DARK;
-        if (!canSee && distToPlayer > effectiveLoseRange) {
+        if (this.chaseLockTimer <= 0 && !canSee && !canHear && !flashlightVisible && distToPlayer > effectiveLoseRange) {
           console.debug(`[Enemy z${this.patrolZone} f${this.floorIndex}] LOST player at dist ${distToPlayer.toFixed(1)}`);
           // Lost the player — go to last known position, then investigate the area
           this.state = EnemyState.SEARCHING;
