@@ -15,7 +15,7 @@ const ENERGY_DECAY = 0.10; // energy(cost) = exp(-cost * DECAY)
 
 // Direction gradient sampling radius (open steps from the player's cell).
 // 1 = only cardinal neighbours; 2+ captures corners for smooth diagonal angles.
-const DIRECTION_SAMPLE_DEPTH = 2;
+const DIRECTION_SAMPLE_DEPTH = 4;
 
 /**
  * Flood-fill sound energy from a source cell (enemy) through the maze grid
