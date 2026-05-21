@@ -344,7 +344,7 @@ export class Enemy {
       if (gain > 0) {
         const prevSuspicion = this.suspicion;
         this.suspicion = Math.min(1, this.suspicion + gain * dt);
-        if (this.noticeCooldown <= 0 && prevSuspicion < 0.05 && this.suspicion >= 0.05) {
+        if (this.noticeCooldown <= 0 && prevSuspicion < 0.20 && this.suspicion >= 0.20) {
           this.audio.playChannelNotice(this.channelId);
           this.noticeCooldown = 12;
         }

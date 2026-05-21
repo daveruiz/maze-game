@@ -5,7 +5,7 @@
  */
 import soundConfig from './SoundConfig';
 
-const IDLE_FILES    = ['idle-01.mp3', 'idle-02.mp3', 'idle-03.mp3', 'idle-04.mp3', 'idle-05.mp3', 'idle-06.mp3'];
+const IDLE_FILES    = ['idle-01.mp3', 'idle-02.mp3', 'idle-03.mp3', 'idle-04.mp3', 'idle-06.mp3'];
 const CHASING_FILES = ['chasing-01.mp3', 'chasing-02.mp3', 'chasing-03.mp3', 'chasing-04.mp3', 'chasing-05.mp3', 'chasing-06.mp3'];
 const ALERT_FILE    = 'alert.mp3';
 
