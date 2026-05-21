@@ -262,9 +262,6 @@ export class Enemy {
     }
     this.mesh.visible = true;
     this.audio.startChannelChains(this.channelId);
-    // Chains rate: 1.0 (calm patrol) → 1.4 (full chase) driven by suspicion/chase state
-    const alertLevel = this.state === EnemyState.CHASING ? 1.0 : this.suspicion;
-    this.audio.setChannelChainsRate(this.channelId, 1.0 + alertLevel * 0.4);
 
     const speedMult = 1 + this.floorIndex * SPEED_SCALE_PER_FLOOR;
 

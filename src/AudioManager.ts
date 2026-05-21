@@ -33,7 +33,10 @@ class EnemyChannel {
 
   // Constant chains loop (independent of state)
   private chainsLoop: AudioBufferSourceNode | null = null;
-  private targetChainsRate = 1.0;
+  // Second chains loop — added during chase for layered texture
+  private chainsLoop2: AudioBufferSourceNode | null = null;
+  private chainsBufRef: AudioBuffer | null = null;
+  private chainsVolumeRef = 0.3;
 
   // Notice sound — independent of oneShot system so it can't be interrupted
   private noticeNode: AudioBufferSourceNode | null = null;
@@ -173,6 +176,7 @@ class EnemyChannel {
         this.setLoop(shared.searchingBuf, 0.4);
         if (this.oneShotPriority < 3) this.stopOneShot();
         this.scheduleNext(IDLE_MIN_INTERVAL, IDLE_MAX_INTERVAL);
+        this.stopChainsLoop2();
         break;
 
       case 'spotted':
@@ -185,6 +189,7 @@ class EnemyChannel {
           this.playRandomOneShot(shared.chasingMp3s, 0.7, 2);
         }
         this.scheduleNext(CHASING_MIN_INTERVAL, CHASING_MAX_INTERVAL);
+        this.startChainsLoop2();
         break;
     }
   }
@@ -192,12 +197,14 @@ class EnemyChannel {
   /** Start the constant chains loop (call once after channel creation, when buffer is loaded) */
   startChainsLoop(buf: AudioBuffer, volume: number) {
     if (this.chainsLoop) return; // already playing
+    this.chainsBufRef = buf;
+    this.chainsVolumeRef = volume;
     const src = this.ctx.createBufferSource();
     src.buffer = buf;
     src.loop = true;
     src.loopStart = 0;
     src.loopEnd = buf.duration;
-    src.playbackRate.value = this.targetChainsRate;
+    src.playbackRate.value = 1.0;
     const g = this.ctx.createGain();
     g.gain.value = volume;
     src.connect(g).connect(this.panner);
@@ -205,12 +212,26 @@ class EnemyChannel {
     this.chainsLoop = src;
   }
 
-  /** Smoothly update the chains loop playback rate (1.0 = normal, >1 = faster/urgent) */
-  setChainsRate(rate: number) {
-    this.targetChainsRate = rate;
-    if (this.chainsLoop) {
-      this.chainsLoop.playbackRate.cancelScheduledValues(this.ctx.currentTime);
-      this.chainsLoop.playbackRate.setTargetAtTime(rate, this.ctx.currentTime, 0.15);
+  private startChainsLoop2() {
+    if (this.chainsLoop2 || !this.chainsBufRef) return;
+    const src = this.ctx.createBufferSource();
+    src.buffer = this.chainsBufRef;
+    src.loop = true;
+    src.loopStart = 0;
+    src.loopEnd = this.chainsBufRef.duration;
+    src.playbackRate.value = 1.0;
+    const g = this.ctx.createGain();
+    g.gain.value = this.chainsVolumeRef;
+    src.connect(g).connect(this.panner);
+    // Random offset ensures it sounds different from the first loop
+    src.start(0, Math.random() * this.chainsBufRef.duration);
+    this.chainsLoop2 = src;
+  }
+
+  private stopChainsLoop2() {
+    if (this.chainsLoop2) {
+      try { this.chainsLoop2.stop(); } catch {}
+      this.chainsLoop2 = null;
     }
   }
 
@@ -221,6 +242,7 @@ class EnemyChannel {
       try { this.chainsLoop.stop(); } catch {}
       this.chainsLoop = null;
     }
+    this.stopChainsLoop2();
     if (this.noticeNode) {
       try { this.noticeNode.stop(); } catch {}
       this.noticeNode = null;
@@ -601,11 +623,6 @@ export class AudioManager {
   startChannelChains(id: number) {
     if (!this.shared.chainsBuf || !soundConfig.enemyLoop) return;
     this.channels.get(id)?.startChainsLoop(this.shared.chainsBuf, soundConfig.enemyLoop.volume);
-  }
-
-  /** Update playback rate of the chains loop for a channel (1.0 = normal, >1 = faster) */
-  setChannelChainsRate(id: number, rate: number) {
-    this.channels.get(id)?.setChainsRate(rate);
   }
 
   /** Play the notice sound for a channel (first detection stab) */
