@@ -278,21 +278,39 @@
     }
     /* ── Suspicion debug panel ────────────────────── */
     #suspicion-debug {
-      background: rgba(0,0,0,0.75);
-      border: 1px solid rgba(255,200,60,0.3);
+      background: rgba(0,0,0,0.5);
       border-radius: 4px;
-      padding: 5px 8px;
-      font-family: monospace;
+      padding: 4px 8px;
       font-size: 11px;
-      line-height: 1.7;
-      white-space: pre;
+      display: flex;
+      flex-direction: column;
+      gap: 4px;
     }
-    #suspicion-debug .sd-label {
-      color: rgba(255,200,60,0.6);
+    .sd-row {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+    }
+    .sd-row .sd-id {
+      color: #888;
+      font-size: 10px;
+      width: 18px;
+    }
+    .sd-row .sd-track {
+      width: clamp(50px, 10vw, 100px);
+      height: clamp(4px, 0.8vh, 8px);
+      background: rgba(255,255,255,0.1);
+      border-radius: 3px;
+      overflow: hidden;
+    }
+    .sd-row .sd-fill {
+      height: 100%;
+      border-radius: 3px;
+      transition: width 0.2s, background 0.2s;
+    }
+    .sd-row .sd-state {
       font-size: 9px;
-      letter-spacing: 2px;
-      text-transform: uppercase;
-      margin-bottom: 2px;
+      letter-spacing: 1px;
     }
 
     /* ── Mobile responsive overrides ─────────────── */

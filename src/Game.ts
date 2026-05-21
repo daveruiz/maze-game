@@ -793,22 +793,26 @@ export class Game {
       this.suspicionDebugEl.style.display = 'none';
       return;
     }
-    this.suspicionDebugEl.style.display = 'block';
+    this.suspicionDebugEl.style.display = 'flex';
 
-    const BAR = 10;
-    let html = '<div class="sd-label">SUSPICION</div>';
+    let html = '';
     for (let i = 0; i < floorEnemies.length; i++) {
       const e = floorEnemies[i];
       const pct = Math.round(e.suspicion * 100);
-      const filled = Math.round(e.suspicion * BAR);
-      const bar = '█'.repeat(filled) + '░'.repeat(BAR - filled);
-      const stateLabel =
-        e.state === EnemyState.CHASING  ? '<span style="color:#f44">CHASE</span>' :
-        e.state === EnemyState.SPOTTED  ? '<span style="color:#f80">SPOT!</span>'  :
-        e.suspicion > 0.6               ? '<span style="color:#fa4">ALRT </span>'  :
-                                          '<span style="color:#888">srch </span>';
       const barColor = pct >= 80 ? '#f44' : pct >= 40 ? '#fa4' : '#4af';
-      html += `<div>E${i} <span style="color:${barColor}">${bar}</span> ${String(pct).padStart(3)}% ${stateLabel}</div>`;
+      const stateColor =
+        e.state === EnemyState.CHASING ? '#f44' :
+        e.state === EnemyState.SPOTTED ? '#f80' :
+        e.suspicion > 0.6             ? '#fa4' : '#666';
+      const stateText =
+        e.state === EnemyState.CHASING ? 'CHASE' :
+        e.state === EnemyState.SPOTTED ? 'SPOT!' :
+        e.suspicion > 0.6             ? 'ALRT'  : '';
+      html += `<div class="sd-row">` +
+        `<span class="sd-id">E${i}</span>` +
+        `<div class="sd-track"><div class="sd-fill" style="width:${pct}%;background:${barColor}"></div></div>` +
+        `<span class="sd-state" style="color:${stateColor}">${stateText}</span>` +
+        `</div>`;
     }
     this.suspicionDebugEl.innerHTML = html;
   }

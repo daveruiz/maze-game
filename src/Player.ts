@@ -293,7 +293,7 @@ export class Player {
     } else if (!this.isOnGround) {
       targetNoise = 0.05; // airborne — nearly silent
     } else if (this.sprinting) {
-      targetNoise = 0.7;
+      targetNoise = 0.85;
     } else if (hSpeed > 0.3) {
       targetNoise = 0.3; // walking
     }

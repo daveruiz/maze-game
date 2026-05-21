@@ -694,7 +694,7 @@ export class AudioManager {
 
     // Volume scales with speed — louder when sprinting
     const gain = this.ctx.createGain();
-    gain.gain.value = (0.02 + speedT * 0.06) * volumeMult; // 0.02 walk → 0.08 sprint
+    gain.gain.value = (0.02 + speedT * 0.14) * volumeMult; // 0.02 walk → 0.16 sprint
 
     src.connect(gain).connect(panner).connect(this.masterGain);
     src.start();
