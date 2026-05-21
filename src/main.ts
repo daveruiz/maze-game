@@ -2,11 +2,12 @@ import { Game } from './Game';
 import { inputMode } from './InputMode';
 import { AudioManager } from './AudioManager';
 
-const container = document.getElementById('canvas-container')!;
-const overlay   = document.getElementById('overlay')!;
-const startBtn  = document.getElementById('start-btn')!;
-const hud       = document.getElementById('hud')!;
-const blackout  = document.getElementById('blackout')!;
+const container     = document.getElementById('canvas-container')!;
+const overlay       = document.getElementById('overlay')!;
+const startBtn      = document.getElementById('start-btn')!;
+const hud           = document.getElementById('hud')!;
+const blackout      = document.getElementById('blackout')!;
+const loadingScreen = document.getElementById('loading-screen')!;
 
 let game: Game | null = null;
 
@@ -105,9 +106,11 @@ startBtn.addEventListener('click', () => {
   overlay.classList.remove('ready');
 
   setTimeout(() => {
-    // Screen is black — wait for preload then start game (audio begins)
+    // Screen is black — show loading indicator then start game
     overlay.style.display = 'none';
     hud.style.display = 'block';
+    loadingScreen.style.display = 'block';
+    requestAnimationFrame(() => { loadingScreen.style.opacity = '1'; });
 
     preloadPromise.then(() => {
       if (game) {
@@ -116,6 +119,10 @@ startBtn.addEventListener('click', () => {
         game = new Game(container);
         game.start();
       }
+
+      // Hide loading message before the fade-in begins
+      loadingScreen.style.opacity = '0';
+      setTimeout(() => { loadingScreen.style.display = 'none'; }, 400);
 
       if (!inputMode.isTouch) document.body.requestPointerLock();
 

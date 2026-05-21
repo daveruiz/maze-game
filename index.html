@@ -105,6 +105,20 @@
       pointer-events: none;
       z-index: 8;
     }
+    #loading-screen {
+      position: absolute;
+      top: 50%; left: 50%;
+      transform: translate(-50%, -50%);
+      color: #e8c56d;
+      font-size: clamp(2rem, 6vw, 3.5rem);
+      letter-spacing: 6px;
+      text-transform: uppercase;
+      pointer-events: none;
+      z-index: 9;
+      display: none;
+      opacity: 0;
+      transition: opacity 0.4s ease;
+    }
     #overlay h1 {
       font-size: 7rem;
       letter-spacing: 8px;
@@ -342,6 +356,7 @@
 <body>
   <div id="canvas-container">
     <div id="blackout"></div>
+    <div id="loading-screen">Loading...</div>
     <div id="hud" style="display:none;">
       <div id="crosshair"></div>
       <div id="info-panel">
