@@ -35,6 +35,9 @@ class EnemyChannel {
   private chainsLoop: AudioBufferSourceNode | null = null;
   private targetChainsRate = 1.0;
 
+  // Notice sound — independent of oneShot system so it can't be interrupted
+  private noticeNode: AudioBufferSourceNode | null = null;
+
   // MP3 one-shot
   private oneShot: AudioBufferSourceNode | null = null;
   private oneShotPriority: number = 0;
@@ -218,6 +221,10 @@ class EnemyChannel {
       try { this.chainsLoop.stop(); } catch {}
       this.chainsLoop = null;
     }
+    if (this.noticeNode) {
+      try { this.noticeNode.stop(); } catch {}
+      this.noticeNode = null;
+    }
     this.currentState = '';
     this.nextTriggerTime = 0;
   }
@@ -279,9 +286,7 @@ class EnemyChannel {
   }
 
   playNotice(buf: AudioBuffer | null) {
-    if (!buf) return;
-    if (this.oneShot && this.oneShotPriority >= 2) return;
-    this.stopOneShot();
+    if (!buf || this.noticeNode) return; // already playing, don't interrupt itself
     const src = this.ctx.createBufferSource();
     src.buffer = buf;
     src.playbackRate.value = PLAYBACK_RATE;
@@ -289,9 +294,8 @@ class EnemyChannel {
     g.gain.value = 0.4;
     src.connect(g).connect(this.panner);
     src.start();
-    this.oneShot = src;
-    this.oneShotPriority = 1;
-    src.onended = () => { if (this.oneShot === src) { this.oneShot = null; this.oneShotPriority = 0; } };
+    this.noticeNode = src;
+    src.onended = () => { if (this.noticeNode === src) this.noticeNode = null; };
   }
 
   private playRandomOneShot(pool: AudioBuffer[], volume: number, priority: number) {
