@@ -1162,6 +1162,14 @@ if (caught && !caughtBy) {
       this.debugSoundField = sfCb.checked;
     });
 
+    // Disable enemy detection
+    const ndCb = document.getElementById('dbg-nodetection') as HTMLInputElement;
+    ndCb.addEventListener('change', () => {
+      for (const enemy of this.enemies) {
+        enemy.detectionEnabled = !ndCb.checked;
+      }
+    });
+
     // Pixel scale buttons (resolution downscale for performance)
     const baseDPR = Math.min(window.devicePixelRatio, 2);
     menu.querySelectorAll<HTMLButtonElement>('button[data-pixelscale]').forEach(btn => {
@@ -1282,6 +1290,7 @@ if (caught && !caughtBy) {
     (document.getElementById('dbg-fullbright') as HTMLInputElement).checked = false;
     (document.getElementById('dbg-revealmap') as HTMLInputElement).checked = false;
     (document.getElementById('dbg-fastforward') as HTMLInputElement).checked = false;
+    (document.getElementById('dbg-nodetection') as HTMLInputElement).checked = false;
     // Clear dynamic objects (keep camera)
     this.scene.children
       .filter(c => c !== this.camera)

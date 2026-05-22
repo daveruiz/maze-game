@@ -1,10 +1,35 @@
 import * as THREE from 'three';
+import { GLTFLoader } from 'three/examples/jsm/loaders/GLTFLoader.js';
+import { clone as skeletonClone } from 'three/examples/jsm/utils/SkeletonUtils.js';
 import { EnemyState, Cell } from './types';
 import { MazeGenerator, CELL_SIZE, WALL_HEIGHT, OBSTACLE_HEIGHT } from './Maze';
 import { AudioManager } from './AudioManager';
 import { computeSoundField } from './SoundField';
 
-const BASE_SEARCH_SPEED = 2.5;
+// ── GLTF asset cache ────────────────────────────────────────────────────────
+// Loads the GLB once; every Enemy instance clones the skeleton from the cache.
+interface GltfCache { scene: THREE.Group; animations: THREE.AnimationClip[] }
+let _gltfCache: Promise<GltfCache> | null = null;
+
+function loadEnemyGltf(): Promise<GltfCache> {
+  if (!_gltfCache) {
+    const loader = new GLTFLoader();
+    _gltfCache = loader.loadAsync('/enemy.glb').then(g => ({
+      scene: g.scene as THREE.Group,
+      animations: g.animations,
+    }));
+  }
+  return _gltfCache;
+}
+
+// Desired model height in world units.  Tweak if the model looks too big/small.
+const ENEMY_MODEL_HEIGHT = 2.31;
+
+// Material brightness multiplier applied to the GLB's base colors.
+// 1.0 = original texture colours, 0.0 = pitch black.  Try 0.3–0.6 for horror.
+const ENEMY_BRIGHTNESS = 0.75;
+
+const BASE_SEARCH_SPEED = 0.7;
 const BASE_CHASE_SPEED  = 5.0;
 const SPEED_SCALE_PER_FLOOR = 0.10; // +10% per floor
 const SIGHT_RANGE       = 14;   // world units (flashlight on)
@@ -17,9 +42,10 @@ const PATH_UPDATE_INTERVAL = 0.5; // seconds
 // Separation — enemies prefer patrol targets far from siblings
 const SEPARATION_RADIUS  = 12;  // world units — penalise targets near siblings
 
-// Stuck detection
-const STUCK_CHECK_INTERVAL = 2.0; // seconds
-const STUCK_DISTANCE       = 1.0; // if moved less than this in the interval, considered stuck
+// Stuck detection — threshold scales with patrol speed so a slow enemy isn't
+// falsely flagged just because it covers less ground between checks.
+const STUCK_CHECK_INTERVAL = 2.5; // seconds (longer window gives slow patrol more room)
+const STUCK_DISTANCE       = BASE_SEARCH_SPEED * STUCK_CHECK_INTERVAL * 0.35; // ~30% of expected travel
 
 // Investigation after losing sight
 const INVESTIGATE_DURATION = 4.0; // seconds to investigate area after losing player
@@ -43,7 +69,7 @@ const SUSPICION_ON_ALERT     = 0.50;  // suspicion boost when alerted by a sibli
 const SOUND_OCCLUSION_INTERVAL = 0.8; // seconds between BFS recalculations
 
 export class Enemy {
-  mesh!: THREE.Mesh;
+  mesh!: THREE.Group;                // root group (positioned at floor level)
   private scene: THREE.Scene;
   private maze: MazeGenerator;
   private audio: AudioManager;
@@ -53,6 +79,7 @@ export class Enemy {
   floorIndex: number = 0;
   homeFloor: number = 0;
   suspicion = 0;  // 0–1: scales walk speed and chains rate
+  detectionEnabled = true; // set false via debug menu to make enemy ignore the player
 
   private pos: THREE.Vector3 = new THREE.Vector3();
   private path: THREE.Vector3[] = [];
@@ -96,19 +123,26 @@ export class Enemy {
 
   private noticeCooldown = 0;
 
-  // Directional sprites
-  private texFront!: THREE.Texture;
-  private texBack!:  THREE.Texture;
-  private texSide!:  THREE.Texture;
-  private mat!: THREE.MeshLambertMaterial;
-  private moveDir: THREE.Vector3 = new THREE.Vector3(0, 0, -1);
+  // Movement direction (used for model facing)
+  private moveDir: THREE.Vector3 = new THREE.Vector3(0, 0, 1);
+
+  // ── 3D model / animation ─────────────────────────────────────────────────
+  private mixer:          THREE.AnimationMixer | null = null;
+  private actions:        Map<string, THREE.AnimationAction> = new Map();
+  private currentAnimName = '';
+  private modelReady      = false;
+  private caughtPlayer    = false;
 
   constructor(scene: THREE.Scene, maze: MazeGenerator, audio: AudioManager) {
     this.scene = scene;
     this.maze = maze;
     this.audio = audio;
     this.channelId = audio.createChannel();
-    this.loadSprites();
+
+    // Root group sits at floor level; the GLTF model is added inside it once loaded.
+    this.mesh = new THREE.Group();
+    this.scene.add(this.mesh);
+    this.loadModel();
   }
 
   /** Set sibling enemies (all enemies on the same floor) for separation & alerts */
@@ -134,31 +168,149 @@ export class Enemy {
     this.playerHint.copy(pos);
   }
 
-  private loadSprites() {
-    const loader = new THREE.TextureLoader();
-    this.texFront = loader.load('enemy-front.png');
-    this.texBack  = loader.load('enemy-back.png');
-    this.texSide  = loader.load('enemy-side.png');
+  private async loadModel() {
+    try {
+      const gltf = await loadEnemyGltf();
 
-    [this.texFront, this.texBack, this.texSide].forEach(t => {
-      t.minFilter = THREE.LinearFilter;
-      t.magFilter = THREE.LinearFilter;
-    });
+      // Clone the shared scene so each enemy has its own skeleton/animation state.
+      const model = skeletonClone(gltf.scene) as THREE.Group;
 
-    const geo = new THREE.PlaneGeometry(2.4, 2.55);
-    this.mat = new THREE.MeshLambertMaterial({
-      map: this.texFront,
-      color: 0x666666,
-      emissive: 0xffffff,
-      emissiveIntensity: 0.03,
-      transparent: true,
-      alphaTest: 0.05,
-      depthWrite: false,
-      side: THREE.DoubleSide,
-    });
-    this.mesh = new THREE.Mesh(geo, this.mat);
-    this.mesh.renderOrder = 1;
-    this.scene.add(this.mesh);
+      // Auto-scale: measure bounding box and scale to ENEMY_MODEL_HEIGHT.
+      // updateMatrixWorld(true) is required so child worldMatrices are correct
+      // even before the model is added to the scene.
+      model.updateMatrixWorld(true);
+      const box = new THREE.Box3().setFromObject(model);
+      const modelHeight = box.max.y - box.min.y;
+      if (modelHeight > 0) {
+        const s = ENEMY_MODEL_HEIGHT / modelHeight;
+        model.scale.setScalar(s);
+        console.debug(`[Enemy] GLB height=${modelHeight.toFixed(3)} → scale=${s.toFixed(5)}`);
+      }
+
+      // Propagate the new scale before measuring feet offset.
+      model.updateMatrixWorld(true);
+      const box2 = new THREE.Box3().setFromObject(model);
+      model.position.y = -box2.min.y;
+
+      // Tweak materials: darken for horror atmosphere + cast shadows.
+      model.traverse(child => {
+        if (child instanceof THREE.Mesh || child instanceof THREE.SkinnedMesh) {
+          child.castShadow = true;
+          // Clone the material so each enemy instance is independent.
+          const mats = Array.isArray(child.material) ? child.material : [child.material];
+          const cloned = mats.map(m => {
+            const mat = (m as THREE.MeshStandardMaterial).clone();
+            mat.color.multiplyScalar(ENEMY_BRIGHTNESS);
+            mat.emissiveIntensity = 0;   // kill any self-glow from the original asset
+            mat.depthWrite = true;        // fix limbs rendering behind torso
+            mat.depthTest  = true;
+            // If the material is only "transparent" for alpha-test edges (opacity=1),
+            // switch to alphaTest mode instead — avoids broken back-to-front sorting.
+            if (mat.transparent && mat.opacity >= 0.99) {
+              mat.transparent = false;
+              mat.alphaTest   = 0.1;
+            }
+            return mat;
+          });
+          child.material = cloned.length === 1 ? cloned[0] : cloned;
+          // Disable frustum culling on skinned meshes — their bounding sphere
+          // doesn't account for bone deformations and can cause pop-in.
+          if (child instanceof THREE.SkinnedMesh) {
+            child.frustumCulled = false;
+          }
+        }
+      });
+
+      // Build animation mixer + actions from the shared clips.
+      this.mixer = new THREE.AnimationMixer(model);
+      for (const clip of gltf.animations) {
+        const action = this.mixer.clipAction(clip);
+        action.clampWhenFinished = true;
+        this.actions.set(clip.name, action);
+      }
+
+      this.mesh.add(model);
+      this.modelReady = true;
+
+      // Start the idle walk right away.
+      this.playAnimation('Running', 0); // 'Running' clip = injured walk = casual patrol
+    } catch (err) {
+      console.error('[Enemy] Failed to load enemy.glb — using box placeholder', err);
+      // Fallback placeholder so the game doesn't crash.
+      const geo = new THREE.BoxGeometry(0.6, ENEMY_MODEL_HEIGHT, 0.4);
+      const mat = new THREE.MeshLambertMaterial({ color: 0x880000 });
+      const box = new THREE.Mesh(geo, mat);
+      box.position.y = ENEMY_MODEL_HEIGHT / 2;
+      this.mesh.add(box);
+      this.modelReady = true;
+    }
+  }
+
+  // ── Animation helpers ───────────────────────────────────────────────────
+
+  /**
+   * Cross-fade to a named animation clip.
+   * @param name          Clip name (must match one in the GLB).
+   * @param fadeDuration  Crossfade length in seconds (0 = instant).
+   * @param loop          true = LoopRepeat (default), false = LoopOnce.
+   */
+  private playAnimation(name: string, fadeDuration = 0.25, loop = true) {
+    if (!this.modelReady || name === this.currentAnimName) return;
+    const next = this.actions.get(name);
+    if (!next) return;
+
+    next.loop = loop ? THREE.LoopRepeat : THREE.LoopOnce;
+    if (!loop) next.reset();
+    next.enabled = true;
+    next.play();
+
+    const prev = this.actions.get(this.currentAnimName);
+    if (prev && fadeDuration > 0) {
+      prev.crossFadeTo(next, fadeDuration, true);
+    } else if (prev) {
+      prev.stop();
+    }
+
+    this.currentAnimName = name;
+  }
+
+  /**
+   * Decide which animation should play each frame, then tick the mixer.
+   */
+  private updateAnimationState(dt: number) {
+    if (!this.modelReady || !this.mixer) return;
+    this.mixer.update(dt);
+
+    if (this.caughtPlayer) {
+      this.playAnimation('Injured_Walk', 0.15, false); // dance
+      this.mixer.timeScale = 1.0;
+      return;
+    }
+
+    // Current movement speed this frame — used to sync animation playback rate.
+    const currentSpeed = BASE_SEARCH_SPEED + (BASE_CHASE_SPEED - BASE_SEARCH_SPEED) * this.suspicion;
+    // Reference speed at which each clip was authored (tune if feet still slide).
+    const INJURED_WALK_REF_SPEED = 1.5;  // 'Running' clip looks right at this speed
+    const NORMAL_WALK_REF_SPEED  = 3.0;  // 'Alert' clip looks right at this speed
+
+    if (this.state === EnemyState.CHASING) {
+      this.playAnimation('Skip_Forward', 0.25);
+      this.mixer.timeScale = 1.0;
+    } else {
+      if (this.investigateWaiting) {
+        // Stopped — looking around.
+        this.playAnimation('Boom_Dance', 0.3);
+        this.mixer.timeScale = 1.0;
+      } else if (this.suspicion >= 0.55 || this.investigateTimer > 0) {
+        // Fast enough to warrant the normal walk clip.
+        this.playAnimation('Alert', 0.3);
+        this.mixer.timeScale = Math.max(0.4, currentSpeed / NORMAL_WALK_REF_SPEED);
+      } else {
+        // Slow creep — injured walk, speed-matched so feet don't slide.
+        this.playAnimation('Running', 0.4);
+        this.mixer.timeScale = Math.max(0.2, currentSpeed / INJURED_WALK_REF_SPEED);
+      }
+    }
   }
 
   /**
@@ -234,7 +386,7 @@ export class Enemy {
     const wp = this.maze.cellToWorld(bestCell.x, bestCell.z, floorIndex);
     this.pos.copy(wp);
     this.pos.y += 1.28;
-    this.mesh.position.copy(this.pos);
+    this.mesh.position.set(this.pos.x, this.pos.y - 1.28, this.pos.z);
     this.stuckCheckPos.copy(this.pos);
     this.soundVirtualPos.copy(this.pos);
     this.smoothSoundPos.copy(this.pos);
@@ -242,6 +394,13 @@ export class Enemy {
     this.soundWallCount = 0;
     this.soundOcclusionTimer = 0;
     this.state = EnemyState.SEARCHING;
+    this.caughtPlayer = false;
+    // Return to patrol animation on respawn.
+    if (this.modelReady) {
+      this.currentAnimName = '';
+      this.actions.forEach(a => a.stop());
+      this.playAnimation('Running', 0); // injured walk = casual patrol
+    }
   }
 
   /** Alert this enemy to investigate a position (called by siblings) */
@@ -334,8 +493,14 @@ export class Enemy {
     const inGlowOnly = !canSee && hasLoS && distToPlayer < glowRange; // peripheral awareness
     const canHear    = playerNoise > 0.1 && distToPlayer < darkRange;
 
+    // ── Detection bypass (debug) ─────────────────────────────────────────
+    if (!this.detectionEnabled) {
+      this.suspicion = Math.max(0, this.suspicion - SUSPICION_DECAY * 4 * dt);
+      if (this.state === EnemyState.CHASING) this.state = EnemyState.SEARCHING;
+    }
+
     // ── Suspicion update (only while searching — chasing uses its own FSM) ───
-    if (this.state === EnemyState.SEARCHING) {
+    if (this.detectionEnabled && this.state === EnemyState.SEARCHING) {
       // Instant chase: direct sight at close range — no suspicion buildup needed
       if (canSee && distToPlayer < INSTANT_CHASE_RANGE) {
         this.suspicion = 1;
@@ -423,7 +588,9 @@ export class Enemy {
 
       case EnemyState.CHASING:
         this.audio.playChannelState(this.channelId, 'chasing');
-        if (canSee || canHear || inGlowOnly) {
+        // Always keep last known position fresh when close — at this range the
+        // enemy can sense the player regardless of light/noise.
+        if (this.detectionEnabled && (canSee || canHear || inGlowOnly || distToPlayer < INSTANT_CHASE_RANGE)) {
           this.lastKnownPlayerPos = playerPos.clone();
         }
 
@@ -466,15 +633,22 @@ export class Enemy {
     const targetY = baseY + (curCell?.hasObstacle ? OBSTACLE_HEIGHT : 0) + 1.28;
     this.pos.y += (targetY - this.pos.y) * Math.min(1, 8 * dt);
 
-    // ── Billboard + directional sprite ──────────────────────────────────
-    this.mesh.position.copy(this.pos);
+    // ── 3D model: position at floor level, face movement direction ───────
+    this.mesh.position.x = this.pos.x;
+    this.mesh.position.z = this.pos.z;
+    this.mesh.position.y = this.pos.y - 1.28;   // feet on floor
 
-    const toCamera = camera.position.clone().sub(this.pos);
-    toCamera.y = 0;
-    const cameraAngle = Math.atan2(toCamera.x, toCamera.z);
-    this.mesh.rotation.y = cameraAngle;
+    if (this.moveDir.lengthSq() > 0.01) {
+      // atan2(x, z) gives the Y-rotation for a model whose forward is +Z.
+      const targetYaw = Math.atan2(this.moveDir.x, this.moveDir.z);
+      let diff = targetYaw - this.mesh.rotation.y;
+      while (diff >  Math.PI) diff -= 2 * Math.PI;
+      while (diff < -Math.PI) diff += 2 * Math.PI;
+      this.mesh.rotation.y += diff * Math.min(1, 10 * dt);
+    }
 
-    this.updateSpriteDirection(toCamera);
+    // ── Animation update ─────────────────────────────────────────────────
+    this.updateAnimationState(dt);
 
     // ── Audio occlusion: BFS-based sound direction + wall count ────────
     this.soundOcclusionTimer += dt;
@@ -518,7 +692,9 @@ export class Enemy {
     }
 
     // Caught?
-    return distToPlayer < CATCH_DISTANCE;
+    const caught = distToPlayer < CATCH_DISTANCE;
+    if (caught && !this.caughtPlayer) this.caughtPlayer = true;
+    return caught;
   }
 
   /** Compute sound propagation from this enemy to the player using a wall-leaking
@@ -647,38 +823,6 @@ export class Enemy {
       const invSpeed = BASE_SEARCH_SPEED + (BASE_CHASE_SPEED - BASE_SEARCH_SPEED) * this.suspicion;
       const d = this.moveToward(next, invSpeed * speedMult * dt);
       if (d < 0.4) this.path.shift();
-    }
-  }
-
-  /**
-   * Choose front/back/side sprite based on the angle between
-   * the enemy's movement direction and the direction from enemy to camera.
-   */
-  private updateSpriteDirection(toCamera: THREE.Vector3) {
-    const moveDirFlat = this.moveDir.clone();
-    moveDirFlat.y = 0;
-    if (moveDirFlat.lengthSq() < 0.0001) {
-      this.mat.map = this.texFront;
-      this.mesh.scale.x = Math.abs(this.mesh.scale.x);
-      return;
-    }
-    moveDirFlat.normalize();
-
-    const camDir = toCamera.clone().normalize();
-    const dot = moveDirFlat.dot(camDir);
-    const crossY = moveDirFlat.x * camDir.z - moveDirFlat.z * camDir.x;
-
-    if (dot < -0.5) {
-      this.mat.map = this.texFront;
-      this.mesh.scale.x = Math.abs(this.mesh.scale.x);
-    } else if (dot > 0.5) {
-      this.mat.map = this.texBack;
-      this.mesh.scale.x = Math.abs(this.mesh.scale.x);
-    } else {
-      this.mat.map = this.texSide;
-      this.mesh.scale.x = crossY < 0
-        ? -Math.abs(this.mesh.scale.x)
-        :  Math.abs(this.mesh.scale.x);
     }
   }
 
@@ -938,17 +1082,17 @@ export class Enemy {
   }
 
   private doChase(dt: number, playerPos: THREE.Vector3, speedMult: number) {
-    const target = this.lastKnownPlayerPos ?? playerPos;
-    const distToTarget = this.pos.distanceTo(target);
+    const distToPlayer = this.pos.distanceTo(playerPos);
 
-    // Close range: move directly (BFS can't resolve sub-cell distances).
-    // Keep threshold small so a wall can't sit between enemy and player.
-    if (distToTarget < CELL_SIZE * 0.5) {
-      this.moveToward(target, BASE_CHASE_SPEED * speedMult * dt);
+    // Close range: always move toward the ACTUAL player position, never a stale
+    // lastKnownPlayerPos — that was causing the "freeze next to player" bug.
+    if (distToPlayer < CELL_SIZE * 0.75) {
+      this.moveToward(playerPos, BASE_CHASE_SPEED * speedMult * dt);
       return;
     }
 
-    // Far range: use BFS pathfinding to avoid wall corners
+    // Far range: pathfind toward last known position (updated above in chasing block).
+    const target = this.lastKnownPlayerPos ?? playerPos;
     if (this.pathTimer >= PATH_UPDATE_INTERVAL * 0.5 || this.path.length === 0) {
       this.pathTimer = 0;
       this.path = this.smoothPath(this.bfsPath(this.pos, target, true));
@@ -1297,6 +1441,12 @@ export class Enemy {
   getSearchTarget(): THREE.Vector3 | null { return this.searchTarget; }
 
   dispose() {
+    if (this.mixer) {
+      this.mixer.stopAllAction();
+      this.mixer.uncacheRoot(this.mixer.getRoot());
+      this.mixer = null;
+    }
+    this.actions.clear();
     this.scene.remove(this.mesh);
   }
 }

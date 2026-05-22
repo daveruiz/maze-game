@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Git Workflow
 
-This is a personal project — push commits directly to `master`. Do not leave work on feature branches; always merge or push to master before ending a session.
+Push directly to `master`. Do **not** push automatically — always commit locally and let the user test before pushing.
 
 ## Project Overview
 
@@ -31,7 +31,8 @@ No test framework is configured. No linter is configured.
 |---|---|
 | `Game.ts` | Central orchestrator. Owns the Three.js scene, camera, renderer, game loop, floor transitions, fog, flashlight, death/respawn, and coordinates all subsystems. |
 | `Player.ts` | First-person physics: movement (WASD), sprint, crouch, jump, gravity, collision with walls/obstacles. Exposes `noiseLevel` for enemy detection. Head bob synced to footstep timing. |
-| `Enemy.ts` | AI with FSM (SEARCHING → SPOTTED → CHASING). BFS pathfinding on maze grid. Sight cone + noise-based hearing. Spatialized chains sound via AudioManager channels. |
+| `Enemy.ts` | AI with FSM (SEARCHING → CHASING). Suspicion-based detection (fills gradually, triggers chase at 100%). BFS pathfinding on maze grid. Chains volume tracks movement speed; second chains layer during chase. |
+| `SoundField.ts` | Dijkstra flood-fill from an enemy position through open corridors, building a flow-field of sound arrival directions and energy. Used for enemy panner direction behind walls. |
 | `Maze.ts` | Procedural maze generation (recursive backtracker), mesh building (walls, floors, ceilings, obstacles, stairs, windows). Exports `CELL_SIZE=4`, `WALL_HEIGHT=3.5`. Per-floor themes with colors, fog density, ceiling/window config. |
 | `AudioManager.ts` | Web Audio API graph: master → dry/reverb split (mono downmix before convolver for headphone stereo). Manages enemy sound channels (PannerNode per enemy), spatialized floor ambience (N sources per floor), procedural footsteps, jumpscare stingers. |
 | `SoundConfig.ts` | Declarative sound configuration. Add/change sounds here without touching game logic. |
@@ -58,13 +59,18 @@ Sources (footsteps, enemy panners, ambience panners)
 ```
 Mono downmix before reverb is critical for headphone stereo separation. All spatialized sources use HRTF panners.
 
-### Enemy AI
-- **Detection**: Sight cone (flashlight on) OR noise-based range (flashlight off, scaled by `playerNoise` 0–1)
-- **Hearing split**: Close (<5 units) triggers CHASE, far (5–19 units) triggers INVESTIGATE (moves to sound position without chasing)
-- **Pathfinding**: BFS on maze grid. Wall check uses AND logic — passage exists only when NEITHER side has a wall bit set
-- **Spawning**: BFS reachability from player position, ignores obstacles (enemies walk over them)
+### Enemy AI & Detection
+- **Suspicion system**: Enemy builds a `suspicion` meter (0–1) instead of instant-triggering chase. Reaches 100% → CHASING. Decays slowly when player not visible/audible. Exception: instant chase if within close range and directly visible.
+- **Visibility inputs**: `playerVisibility` (0–1) passed from Game — flashlight on = 1.0, otherwise scaled by nearby lantern exposure. Scene lanterns increase how visible the player is.
+- **Audibility inputs**: `playerAudibility` from `AudioManager` — tracks footstep/landing sounds, decays over time.
+- **Suspicion rates**: Direct sight × visibility × distance falloff; peripheral glow range (slower); noise (independent of visibility, squared falloff).
+- **Sound direction**: Uses `SoundField.ts` Dijkstra flow-field for panner direction when enemy is behind walls; switches to real position when visible.
+- **Pathfinding**: BFS on maze grid. Wall check uses AND logic — passage exists only when NEITHER side has a wall bit set.
+- **Spawning**: BFS reachability from player position, ignores obstacles (enemies walk over them).
 
-### Player Noise System
+### Player Noise / Audibility System
+`Player.noiseLevel` (0–1) is smoothed (fast attack, slow decay):
+
 | State | Noise Level |
 |---|---|
 | Crouch + still | 0 |
@@ -73,7 +79,7 @@ Mono downmix before reverb is critical for headphone stereo separation. All spat
 | Sprinting | ~0.7 |
 | Landing (from jump/fall) | up to 1.0 |
 
-Noise is smoothed (fast attack, slow decay) via `Player.noiseLevel`.
+`AudioManager.playerAudibility` is a separate value that spikes on footstep/landing sounds and decays per frame. Both are passed to `enemy.update()` each frame.
 
 ### Crouch Implementation
 Crouch is a **camera-only offset** (`currentCrouchDip`), NOT a physics Y change. This avoids false fall detection and obstacle collision issues. Speed multiplied by `CROUCH_MULT=0.4`. Reset on death via `player.resetCrouch()` + camera position snap.
@@ -93,12 +99,14 @@ Crouch is a **camera-only offset** (`currentCrouchDip`), NOT a physics Y change.
 - **Async audio loading**: MP3 buffers load asynchronously. Floor ambience uses a pending request pattern — if buffer isn't ready when `setFloorAmbience` is called, it retries after load completes.
 - **Enemy channel cleanup**: `stopEnemySound()` must clear the channels Map and reset `nextChannelId` to prevent ghost sounds on death/respawn.
 - **BFS reachability**: Do NOT add obstacle blocking to `bfsReachableFrom` — enemies ignore obstacles and blocking them causes spawn issues.
+- **SoundField cost**: Walls are fully opaque (no leakage). `MAX_COST=80` caps propagation range. Energy decays as `exp(-cost * 0.10)`. Rebuild the map each frame from the enemy's cell.
+- **Enemy FSM**: Only two states now — SEARCHING and CHASING (SPOTTED was removed). Suspicion meter bridges the gap.
 - **Footstep/bob sync**: Both use the same interval formula `1/(0.5 - speedT*0.2)`. Change one, change both.
 - **Death animation**: Must call `player.resetCrouch()` AND snap camera position, since death animation bypasses `player.update()`.
 - **Light pooling**: Only 8 `PointLight` instances are reused across the scene for performance. Don't create per-cell lights.
 
 ## Asset Files (public/)
 
-Audio: `ambient-basement.mp3`, `ambient-house.mp3`, `ambient-village.mp3`, `enemy-chains.mp3`, `jumpscare-01.mp3`, `jumpscare-02.mp3`, `death-growl.mp3`
+Audio: `ambient-basement.mp3`, `ambient-house.mp3`, `ambient-village.mp3`, `enemy-chains.mp3`, `jumpscare-01.mp3`, `jumpscare-02.mp3`, `death-growl.mp3`, `notice.mp3`
 Images: `item-key.png`, `item-map.png`, `item-compass.png`
 Attribution: see `THIRD_PARTY_LICENSES.md`
