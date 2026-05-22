@@ -466,51 +466,57 @@
     var gl = canvas.getContext('webgl') || canvas.getContext('experimental-webgl');
     if (!gl) return;
 
-    /* ── Shaders ─────────────────────────────────────────────────────── */
+    /* ── Shared vertex shader ─────────────────────────────────────────── */
     var VERT = [
       'attribute vec2 a_pos;',
       'void main(){ gl_Position=vec4(a_pos,0.0,1.0); }'
     ].join('\n');
 
-    // Light from upper-left: normalize(-0.6,-0.7,0.9) ≈ (-0.466,-0.544,0.699)
-    // UV space: x=right, y=down (after flip), z=toward viewer
-    var FRAG = [
+    /* ── Update pass: blur + decay existing height, stamp nail tips ────── */
+    var UPD_FRAG = [
       'precision highp float;',
+      'uniform sampler2D u_htex;',
       'uniform vec2  u_res;',
       'uniform vec2  u_tip0,u_tip1,u_tip2,u_tip3,u_tip4;',
-      'uniform vec2  u_fwd,u_right;',
-      'uniform float u_fade;',
+      'uniform float u_pressure;',
+      'const float DECAY=0.993;',
 
-      'const vec3  BASE = vec3(0.026,0.022,0.031);',
-      'const vec3  LDIR = vec3(-0.466,-0.544,0.699);',
-      'const float HS   = 5.0;',
-
-      // Trail bump: narrow cross-section (nail), exponential decay behind the tip.
-      // along<0 = behind tip (fabric returning) → main trail
-      // along>0 = ahead of tip (not yet reached) → tiny pre-tension
-      'float fH(vec2 uv,vec2 tip,float ar,float w,float tl){',
-      '  vec2 d=vec2((uv.x-tip.x)*ar,uv.y-tip.y);',
-      '  vec2 fwd=normalize(vec2(u_fwd.x*ar,u_fwd.y));',
-      '  vec2 rgt=normalize(vec2(u_right.x*ar,u_right.y));',
-      '  float p=dot(d,rgt);',
-      '  float a=dot(d,fwd);',
-      '  float cx=exp(-p*p/(w*w));',
-      '  float tr;',
-      '  if(a<=0.0){ float t=-a/tl;  tr=exp(-t*4.0); }',
-      '  else      { float t= a/0.010; tr=exp(-t*4.0); }',
-      '  return cx*tr;',
-      '}',
-
-      'float bumpH(vec2 uv){',
+      'float nail(vec2 uv,vec2 tip,float r){',
       '  float ar=u_res.x/u_res.y;',
-      '  float h=0.0;',
-      '  h+=fH(uv,u_tip0,ar,0.011,0.16);',
-      '  h+=fH(uv,u_tip1,ar,0.014,0.20);',
-      '  h+=fH(uv,u_tip2,ar,0.016,0.24);',
-      '  h+=fH(uv,u_tip3,ar,0.014,0.20);',
-      '  h+=fH(uv,u_tip4,ar,0.011,0.16);',
-      '  return h;',
+      '  vec2 d=vec2((uv.x-tip.x)*ar,uv.y-tip.y);',
+      '  float d2=dot(d,d);',
+      '  if(d2>=r*r) return 0.0;',
+      '  float t=1.0-d2/(r*r); return t*t;',
       '}',
+
+      'void main(){',
+      '  vec2 uv=gl_FragCoord.xy/u_res; uv.y=1.0-uv.y;',
+      '  vec2 px=1.0/u_res;',
+      '  float h=texture2D(u_htex,uv             ).r*0.500',
+      '         +texture2D(u_htex,uv+vec2( px.x,0)).r*0.125',
+      '         +texture2D(u_htex,uv+vec2(-px.x,0)).r*0.125',
+      '         +texture2D(u_htex,uv+vec2(0, px.y)).r*0.125',
+      '         +texture2D(u_htex,uv+vec2(0,-px.y)).r*0.125;',
+      '  h*=DECAY;',
+      '  float s0=nail(uv,u_tip0,0.014);',
+      '  float s1=nail(uv,u_tip1,0.018);',
+      '  float s2=nail(uv,u_tip2,0.022);',
+      '  float s3=nail(uv,u_tip3,0.018);',
+      '  float s4=nail(uv,u_tip4,0.014);',
+      '  float s=max(s0,max(s1,max(s2,max(s3,s4))));',
+      '  h=max(h,s*u_pressure);',
+      '  gl_FragColor=vec4(h,h,h,1.0);',
+      '}'
+    ].join('\n');
+
+    /* ── Display pass: height map + weave → bump-mapped lighting ─────── */
+    var DISP_FRAG = [
+      'precision highp float;',
+      'uniform sampler2D u_htex;',
+      'uniform vec2  u_res;',
+      'const vec3  BASE=vec3(0.026,0.022,0.031);',
+      'const vec3  LDIR=vec3(-0.466,-0.544,0.699);',
+      'const float HS=6.0;',
 
       'float weaveH(vec2 uv){',
       '  float ar=u_res.x/u_res.y;',
@@ -520,167 +526,189 @@
       '}',
 
       'void main(){',
-      '  vec2 uv=gl_FragCoord.xy/u_res;',
-      '  uv.y=1.0-uv.y;',
-      '  float ex=1.6/u_res.x;',
-      '  float ey=1.6/u_res.y;',
-      '  float hc =weaveH(uv);',
-      '  float hcx=weaveH(uv+vec2(ex,0.0));',
-      '  float hcy=weaveH(uv+vec2(0.0,ey));',
-      '  vec3 Nc=normalize(vec3(-(hcx-hc)*HS,-(hcy-hc)*HS,1.0));',
-      '  float diffc=max(0.0,dot(Nc,LDIR));',
-      '  vec3 colc=BASE*0.07+BASE*diffc*3.4;',
-      '  float hb =bumpH(uv);',
-      '  float h  =hc+hb;',
-      '  float hx =hcx+bumpH(uv+vec2(ex,0.0));',
-      '  float hy =hcy+bumpH(uv+vec2(0.0,ey));',
+      '  vec2 uv=gl_FragCoord.xy/u_res; uv.y=1.0-uv.y;',
+      '  float ex=1.0/u_res.x; float ey=1.0/u_res.y;',
+      '  float h =texture2D(u_htex,uv           ).r+weaveH(uv           );',
+      '  float hx=texture2D(u_htex,uv+vec2(ex,0 )).r+weaveH(uv+vec2(ex,0 ));',
+      '  float hy=texture2D(u_htex,uv+vec2(0 ,ey)).r+weaveH(uv+vec2(0 ,ey));',
       '  vec3 N=normalize(vec3(-(hx-h)*HS,-(hy-h)*HS,1.0));',
       '  float diff=max(0.0,dot(N,LDIR));',
       '  vec3  H=normalize(LDIR+vec3(0.0,0.0,1.0));',
       '  float spec=pow(max(0.0,dot(N,H)),28.0);',
-      '  vec3 colb=BASE*0.07+BASE*diff*3.4+vec3(0.5,0.44,0.65)*spec*0.9;',
-      '  gl_FragColor=vec4(mix(colc,colb,u_fade),1.0);',
+      '  vec3 col=BASE*0.07+BASE*diff*3.4+vec3(0.5,0.44,0.65)*spec*0.9;',
+      '  gl_FragColor=vec4(col,1.0);',
       '}'
     ].join('\n');
 
+    /* ── WebGL resource setup ─────────────────────────────────────────── */
     function mkShader(type, src) {
       var s = gl.createShader(type);
-      gl.shaderSource(s, src);
-      gl.compileShader(s);
+      gl.shaderSource(s, src); gl.compileShader(s);
       if (!gl.getShaderParameter(s, gl.COMPILE_STATUS))
         console.error('ClawShader:', gl.getShaderInfoLog(s));
       return s;
     }
-    var prog = gl.createProgram();
-    gl.attachShader(prog, mkShader(gl.VERTEX_SHADER, VERT));
-    gl.attachShader(prog, mkShader(gl.FRAGMENT_SHADER, FRAG));
-    gl.linkProgram(prog);
-    gl.useProgram(prog);
+    var vs = mkShader(gl.VERTEX_SHADER, VERT);
+    function mkProg(fs) {
+      var p = gl.createProgram();
+      gl.attachShader(p, vs);
+      gl.attachShader(p, mkShader(gl.FRAGMENT_SHADER, fs));
+      gl.linkProgram(p); return p;
+    }
+    var updProg  = mkProg(UPD_FRAG);
+    var dispProg = mkProg(DISP_FRAG);
 
     var buf = gl.createBuffer();
     gl.bindBuffer(gl.ARRAY_BUFFER, buf);
     gl.bufferData(gl.ARRAY_BUFFER, new Float32Array([-1,-1,1,-1,-1,1,1,1]), gl.STATIC_DRAW);
-    var aPos = gl.getAttribLocation(prog, 'a_pos');
-    gl.enableVertexAttribArray(aPos);
-    gl.vertexAttribPointer(aPos, 2, gl.FLOAT, false, 0, 0);
 
-    var U = {};
-    ['u_res','u_tip0','u_tip1','u_tip2','u_tip3','u_tip4','u_fwd','u_right','u_fade']
-      .forEach(function(n){ U[n] = gl.getUniformLocation(prog, n); });
+    var aUpd  = gl.getAttribLocation(updProg,  'a_pos');
+    var aDisp = gl.getAttribLocation(dispProg, 'a_pos');
+    function useAttrib(loc) {
+      gl.enableVertexAttribArray(loc);
+      gl.vertexAttribPointer(loc, 2, gl.FLOAT, false, 0, 0);
+    }
 
-    /* ── Hand anatomy ───────────────────────────────────────────────── */
-    // Finger tip positions in local [right, fwd] units.
-    // Origin = palm centre; fwd = direction from palm toward fingertips.
-    // Based on real proportions: middle longest, ring slightly shorter,
-    // index shorter still, pinky and thumb noticeably shorter.
-    // right axis: negative = toward thumb side, positive = toward pinky side.
+    var Uu = {}, Ud = {};
+    ['u_htex','u_res','u_tip0','u_tip1','u_tip2','u_tip3','u_tip4','u_pressure']
+      .forEach(function(n){ Uu[n]=gl.getUniformLocation(updProg,n); });
+    ['u_htex','u_res']
+      .forEach(function(n){ Ud[n]=gl.getUniformLocation(dispProg,n); });
+
+    /* ── Ping-pong height map textures ────────────────────────────────── */
+    var texA=null, texB=null, fbA=null, fbB=null;
+
+    function mkTex(w, h) {
+      var t = gl.createTexture();
+      gl.bindTexture(gl.TEXTURE_2D, t);
+      gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, w, h, 0, gl.RGBA, gl.UNSIGNED_BYTE, null);
+      gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
+      gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
+      gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR);
+      gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.LINEAR);
+      return t;
+    }
+    function mkFbo(tex) {
+      var fb = gl.createFramebuffer();
+      gl.bindFramebuffer(gl.FRAMEBUFFER, fb);
+      gl.framebufferTexture2D(gl.FRAMEBUFFER, gl.COLOR_ATTACHMENT0, gl.TEXTURE_2D, tex, 0);
+      return fb;  // leaves this FBO bound
+    }
+    function initTex(w, h) {
+      if (texA) {
+        gl.deleteTexture(texA); gl.deleteTexture(texB);
+        gl.deleteFramebuffer(fbA); gl.deleteFramebuffer(fbB);
+      }
+      texA=mkTex(w,h); texB=mkTex(w,h);
+      gl.clearColor(0,0,0,1);
+      fbA=mkFbo(texA); gl.clear(gl.COLOR_BUFFER_BIT);
+      fbB=mkFbo(texB); gl.clear(gl.COLOR_BUFFER_BIT);
+      gl.bindFramebuffer(gl.FRAMEBUFFER, null);
+    }
+
+    /* ── Hand anatomy ─────────────────────────────────────────────────── */
     var FINGERS = [
-      [-1.12,  0.48],   // thumb  – short, far to the side
-      [-0.52,  0.91],   // index
-      [  0.0,  1.00],   // middle – reference (longest)
-      [ 0.50,  0.94],   // ring
-      [ 1.04,  0.66],   // pinky  – short
+      [-1.12, 0.48],  // thumb
+      [-0.52, 0.91],  // index
+      [  0.0, 1.00],  // middle
+      [ 0.50, 0.94],  // ring
+      [ 1.04, 0.66],  // pinky
     ];
-    var HAND_SIZE = 0.115;   // UV units per anatomy unit
+    var HAND_SIZE = 0.115;
 
-    /* ── Animation state machine ─────────────────────────────────────── */
-    // Claw drags a short distance across a random area, fading in at the
-    // start and out at the end (sine envelope — no hard cut).
-    var DRAG_DUR = 7.0;   // s — total duration of one drag pass
-    var IDLE_DUR = 5.0;   // s — pause between drags
-
-    var rafId = null, t0 = null;
-    var phase = 'idle', phaseStart = -999;
-    var startX = 0.4, startY = 0.3;
-    var endX   = 0.6, endY   = 0.6;
-    var handAngle = 0;
-    var lastW = 0, lastH = 0;
+    /* ── Animation state machine ──────────────────────────────────────── */
+    var DRAG_DUR = 7.0, IDLE_DUR = 5.0;
+    var rafId=null, t0=null;
+    var phase='idle', phaseStart=-999;
+    var startX=0.4, startY=0.2, endX=0.6, endY=0.5, handAngle=0;
+    var lastW=0, lastH=0;
 
     function newDrag() {
-      handAngle = (Math.random() - 0.5) * Math.PI * (160/180);  // ±80° from straight down
-      var fdx = Math.sin(handAngle);
-      var fdy = Math.cos(handAngle);
+      handAngle = (Math.random()-0.5) * Math.PI * (160/180);
+      var fdx=Math.sin(handAngle), fdy=Math.cos(handAngle);
       var dist = 0.18 + Math.random() * 0.14;
       startX = 0.15 + Math.random() * 0.70;
-      startY = 0.05 + Math.random() * 0.55;   // bias toward top for downward motion
+      startY = 0.05 + Math.random() * 0.55;
       endX = startX + fdx * dist;
       endY = startY + fdy * dist;
     }
 
     function render(now) {
       if (!rafId) return;
-      if (t0 === null) t0 = now;
-      var T  = (now - t0) * 0.001;
-      var dt = T - phaseStart;
+      if (t0===null) t0=now;
+      var T=(now-t0)*0.001, dt=T-phaseStart;
 
-      // Advance phase
-      if      (phase === 'idle'     && dt >= IDLE_DUR)  { newDrag(); phase = 'dragging'; phaseStart = T; dt = 0; }
-      else if (phase === 'dragging' && dt >= DRAG_DUR)  { phase = 'idle';     phaseStart = T; dt = 0; }
+      if      (phase==='idle'     && dt>=IDLE_DUR) { newDrag(); phase='dragging'; phaseStart=T; dt=0; }
+      else if (phase==='dragging' && dt>=DRAG_DUR) { phase='idle';               phaseStart=T; dt=0; }
 
-      var fade = 0, dragT = 0;
-      if (phase === 'dragging') {
-        dragT = Math.min(1, dt / DRAG_DUR);
-        // Sine envelope: 0 at start, peaks at middle, 0 at end
-        fade = Math.pow(Math.sin(dragT * Math.PI), 0.55);
+      var pressure=0, dragT=0;
+      if (phase==='dragging') {
+        dragT    = Math.min(1, dt/DRAG_DUR);
+        pressure = Math.pow(Math.sin(dragT*Math.PI), 0.55);
       }
 
-      // Resize canvas to actual pixel dimensions (inside a CSS-transformed parent)
-      var rect = canvas.getBoundingClientRect();
-      var dpr  = Math.min(window.devicePixelRatio||1, 2);
-      var pw   = Math.round(rect.width  * dpr);
-      var ph   = Math.round(rect.height * dpr);
-      if (pw !== lastW || ph !== lastH) {
+      // Resize canvas + recreate textures if needed
+      var rect=canvas.getBoundingClientRect();
+      var dpr =Math.min(window.devicePixelRatio||1, 2);
+      var pw  =Math.round(rect.width*dpr), ph=Math.round(rect.height*dpr);
+      if (pw!==lastW || ph!==lastH) {
         canvas.width=pw; canvas.height=ph;
-        gl.viewport(0,0,pw,ph);
         lastW=pw; lastH=ph;
+        initTex(pw, ph);
       }
 
-      // Current hand centre along the drag path
-      var mx = startX + (endX - startX) * dragT;
-      var my = startY + (endY - startY) * dragT;
-
-      // Hand orientation vectors
-      var fdx = Math.sin(handAngle);
-      var fdy = Math.cos(handAngle);
-      var rx  =  fdy;   // right = fwd rotated 90° CW
-      var ry  = -fdx;
-
-      // Compute 5 finger tip positions from anatomy + current hand pose
-      var tips = [];
-      for (var i = 0; i < 5; i++) {
-        var pr = FINGERS[i][0];
-        var pf = FINGERS[i][1];
-        tips.push([
-          mx + rx * pr * HAND_SIZE - fdx * pf * HAND_SIZE,
-          my + ry * pr * HAND_SIZE - fdy * pf * HAND_SIZE,
-        ]);
+      // Palm center moves fwd; fingers trail behind (-pf offset)
+      var mx=startX+(endX-startX)*dragT;
+      var my=startY+(endY-startY)*dragT;
+      var fdx=Math.sin(handAngle), fdy=Math.cos(handAngle);
+      var rx=fdy, ry=-fdx;
+      var tips=[];
+      for (var i=0; i<5; i++) {
+        var pr=FINGERS[i][0], pf=FINGERS[i][1];
+        tips.push([mx+rx*pr*HAND_SIZE-fdx*pf*HAND_SIZE,
+                   my+ry*pr*HAND_SIZE-fdy*pf*HAND_SIZE]);
       }
 
-      gl.uniform2f(U.u_res,   pw, ph);
-      for (var j=0; j<5; j++) gl.uniform2f(U['u_tip'+j], tips[j][0], tips[j][1]);
-      gl.uniform2f(U.u_fwd,   fdx, fdy);
-      gl.uniform2f(U.u_right, rx,  ry);
-      gl.uniform1f(U.u_fade,  fade);
-
+      // ── Update pass: blur+decay+stamp → fbB (writes to texB) ─────────
+      gl.bindFramebuffer(gl.FRAMEBUFFER, fbB);
+      gl.viewport(0,0,pw,ph);
+      gl.useProgram(updProg); useAttrib(aUpd);
+      gl.activeTexture(gl.TEXTURE0); gl.bindTexture(gl.TEXTURE_2D, texA);
+      gl.uniform1i(Uu.u_htex, 0);
+      gl.uniform2f(Uu.u_res, pw, ph);
+      for (var j=0;j<5;j++) gl.uniform2f(Uu['u_tip'+j], tips[j][0], tips[j][1]);
+      gl.uniform1f(Uu.u_pressure, pressure);
       gl.drawArrays(gl.TRIANGLE_STRIP, 0, 4);
+
+      // Swap so texA always holds the latest state
+      var tmp; tmp=texA;texA=texB;texB=tmp; tmp=fbA;fbA=fbB;fbB=tmp;
+
+      // ── Display pass: height map → bump lighting → screen ────────────
+      gl.bindFramebuffer(gl.FRAMEBUFFER, null);
+      gl.viewport(0,0,pw,ph);
+      gl.useProgram(dispProg); useAttrib(aDisp);
+      gl.activeTexture(gl.TEXTURE0); gl.bindTexture(gl.TEXTURE_2D, texA);
+      gl.uniform1i(Ud.u_htex, 0);
+      gl.uniform2f(Ud.u_res, pw, ph);
+      gl.drawArrays(gl.TRIANGLE_STRIP, 0, 4);
+
       rafId = requestAnimationFrame(render);
     }
 
     function start() {
       if (rafId) return;
-      t0 = null; phaseStart = -999; phase = 'idle';
-      rafId = requestAnimationFrame(render);
+      t0=null; phaseStart=-999; phase='idle';
+      rafId=requestAnimationFrame(render);
     }
     function stop() {
-      if (rafId) { cancelAnimationFrame(rafId); rafId = null; }
+      if (rafId) { cancelAnimationFrame(rafId); rafId=null; }
     }
 
-    // Start/stop when overlay show/hides
-    var obs = new MutationObserver(function(){
-      if (overlay.style.display === 'none') stop();
+    var obs=new MutationObserver(function(){
+      if (overlay.style.display==='none') stop();
       else if (!rafId) start();
     });
-    obs.observe(overlay, { attributes:true, attributeFilter:['style'] });
+    obs.observe(overlay, {attributes:true, attributeFilter:['style']});
 
     document.fonts.ready.then(function(){ start(); });
   })();
