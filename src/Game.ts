@@ -71,6 +71,7 @@ export class Game {
   private deathPitch = 0;
   private deathStartPos = new THREE.Vector3();
   private deathMaxStumble = 0.6;
+  private deathHitApplied = false;
 
   // Items
   private items: Item[] = [];
@@ -464,25 +465,35 @@ export class Game {
           camZ,
         );
 
-        // Rotate camera to face the enemy's head bone
-        const headPos = this.deathEnemy.getHeadPosition();
-        const cdx = headPos.x - this.camera.position.x;
-        const cdz = headPos.z - this.camera.position.z;
-        const targetYaw = Math.atan2(-cdx, -cdz);
-        const cdy = headPos.y - this.camera.position.y;
-        const cHDist = Math.sqrt(cdx * cdx + cdz * cdz);
-        const targetPitch = Math.atan2(cdy, cHDist);
+        // Before the hit: fast lerp toward enemy's head so camera faces them
+        if (!this.deathHitApplied) {
+          const headPos = this.deathEnemy.getHeadPosition();
+          const cdx = headPos.x - this.camera.position.x;
+          const cdz = headPos.z - this.camera.position.z;
+          const targetYaw = Math.atan2(-cdx, -cdz);
+          const cdy = headPos.y - this.camera.position.y;
+          const cHDist = Math.sqrt(cdx * cdx + cdz * cdz);
+          const targetPitch = Math.atan2(cdy, cHDist);
 
-        // Smoothly rotate toward enemy (fast snap)
-        const lerpSpeed = 12.0 * dt;
-        let yawDiff = targetYaw - this.deathYaw;
-        if (yawDiff > Math.PI) yawDiff -= 2 * Math.PI;
-        if (yawDiff < -Math.PI) yawDiff += 2 * Math.PI;
-        this.deathYaw += yawDiff * lerpSpeed;
-        this.deathPitch += (targetPitch - this.deathPitch) * lerpSpeed;
+          const lerpSpeed = 12.0 * dt;
+          let yawDiff = targetYaw - this.deathYaw;
+          if (yawDiff > Math.PI) yawDiff -= 2 * Math.PI;
+          if (yawDiff < -Math.PI) yawDiff += 2 * Math.PI;
+          this.deathYaw += yawDiff * lerpSpeed;
+          this.deathPitch += (targetPitch - this.deathPitch) * lerpSpeed;
 
-        // Add shake to rotation too
-        const rotShake = shakeIntensity * 0.02;
+          // Hit flinch at ~1s: enemy strikes the player, camera jerks away
+          if (this.deathTimer >= 1.0) {
+            this.deathHitApplied = true;
+            this.deathYaw += 0.6;
+            this.deathPitch -= 0.35;
+          }
+        }
+        // After hit: no tracking — camera stays where the blow sent it
+
+        // Add shake to rotation too — intensify briefly after hit
+        const hitShake = (this.deathHitApplied && this.deathTimer < 1.4) ? 0.06 : 0;
+        const rotShake = shakeIntensity * 0.02 + hitShake;
         this.camera.rotation.order = 'YXZ';
         this.camera.rotation.y = this.deathYaw + Math.sin(this.deathTimer * 31) * rotShake;
         this.camera.rotation.x = this.deathPitch + Math.cos(this.deathTimer * 43) * rotShake;
@@ -719,6 +730,7 @@ if (caught && !caughtBy) {
   private startDeathAnimation(enemy: Enemy) {
     this.dying = true;
     this.deathTimer = 0;
+    this.deathHitApplied = false;
     this.deathEnemy = enemy;
     // Trigger the enemy's attack animation and face the player
     enemy.playCaughtAnimation();
