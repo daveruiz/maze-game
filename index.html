@@ -282,15 +282,26 @@
       flex-direction: column;
       align-items: center;
       justify-content: center;
-      /* Covers the 16:9 area; box-shadow fills any letterbox/pillarbox gap */
-      background: rgba(0,0,0,0.85);
-      box-shadow: 0 0 0 9999px rgba(0,0,0,0.85);
+      /* Canvas handles the visual background; solid fallback for no-WebGL */
+      background: #050408;
+      box-shadow: 0 0 0 9999px #050408;
       pointer-events: all;
       z-index: 10;
       opacity: 0;
       transition: opacity 0.5s ease;
     }
     #overlay.ready { opacity: 1; }
+    #claw-canvas {
+      position: absolute;
+      inset: 0;
+      width: 100%;
+      height: 100%;
+      pointer-events: none;
+    }
+    #overlay h1, #overlay p, #overlay .controls-list, #overlay #start-btn {
+      position: relative;
+      z-index: 1;
+    }
     #overlay h1 {
       font-size: 7rem;
       letter-spacing: 8px;
@@ -406,6 +417,7 @@
       </div>
 
       <div id="overlay">
+        <canvas id="claw-canvas"></canvas>
         <h1>DAD'S NIGHTMARE</h1>
         <div class="controls-list">
           WASD — Move &nbsp;|&nbsp; SHIFT — Run &nbsp;|&nbsp; C/CTRL — Crouch &nbsp;|&nbsp; SPACE — Jump &nbsp;|&nbsp; F — Flashlight
@@ -444,6 +456,218 @@
       document.getElementById('overlay').classList.add('ready');
     });
   </script>
+
+  <!-- Claw-through-cloth background animation for the title screen -->
+  <script>
+  (function () {
+    'use strict';
+    var canvas  = document.getElementById('claw-canvas');
+    var overlay = document.getElementById('overlay');
+    var gl = canvas.getContext('webgl') || canvas.getContext('experimental-webgl');
+    if (!gl) return;
+
+    /* ── Shaders ─────────────────────────────────────────────────────── */
+    var VERT = [
+      'attribute vec2 a_pos;',
+      'void main(){ gl_Position=vec4(a_pos,0.0,1.0); }'
+    ].join('\n');
+
+    // Light from upper-left: normalize(-0.6, -0.7, 0.9) ≈ (-0.466,-0.544,0.699)
+    // Coordinate space: x=right, y=down (after flip), z=toward viewer
+    var FRAG = [
+      'precision highp float;',
+      'uniform vec2  u_res;',
+      'uniform vec2  u_tip0,u_tip1,u_tip2,u_tip3,u_tip4;',
+      'uniform vec2  u_fwd,u_right;',
+      'uniform float u_fade;',
+
+      'const vec3 BASE = vec3(0.052,0.045,0.062);',
+      'const vec3 LDIR = vec3(-0.466,-0.544,0.699);', // normalized light dir
+      'const float HS  = 3.4;',  // height→normal sensitivity
+
+      // Single finger height contribution.
+      // along<0 → behind tip (trail, fabric returning); along>0 → ahead (barely pushed yet)
+      'float fH(vec2 uv,vec2 tip,float w,float tl){',
+      '  vec2 d=uv-tip;',
+      '  float p=dot(d,u_right);',
+      '  float a=dot(d,u_fwd);',
+      '  float cx=exp(-p*p/(w*w));',
+      '  float tr;',
+      '  if(a<=0.0){',
+      '    float t=-a/tl;',
+      '    tr=exp(-t*4.0);',          // exponential decay behind tip
+      '  } else {',
+      '    float t=a/0.014;',
+      '    tr=exp(-t*t*4.0)*0.16;',   // tiny pre-tension bump ahead of tip
+      '  }',
+      '  return cx*tr;',
+      '}',
+
+      'float height(vec2 uv){',
+      '  float h=0.0;',
+      '  h+=fH(uv,u_tip0,0.0075,0.12);',
+      '  h+=fH(uv,u_tip1,0.0095,0.15);',
+      '  h+=fH(uv,u_tip2,0.011, 0.18);',
+      '  h+=fH(uv,u_tip3,0.0095,0.15);',
+      '  h+=fH(uv,u_tip4,0.0075,0.12);',
+      '  h*=u_fade;',
+      // Cloth-weave texture: fine crosshatch creates visible fabric grain
+      '  float wx=sin(uv.x*140.0)*sin(uv.y*2.5);',
+      '  float wy=sin(uv.y*140.0)*sin(uv.x*2.5);',
+      '  h+=wx*wy*0.018;',
+      '  return h;',
+      '}',
+
+      'void main(){',
+      '  vec2 uv=gl_FragCoord.xy/u_res;',
+      '  uv.y=1.0-uv.y;',  // y=0 at top
+
+      '  float h =height(uv);',
+      '  float e =1.6/min(u_res.x,u_res.y);',
+      '  float hx=height(uv+vec2(e,0.0));',
+      '  float hy=height(uv+vec2(0.0,e));',
+
+      // Surface normal from finite-difference height gradient
+      '  vec3 N=normalize(vec3(-(hx-h)*HS,-(hy-h)*HS,1.0));',
+      '  float diff=max(0.0,dot(N,LDIR));',
+      '  vec3  H=normalize(LDIR+vec3(0.0,0.0,1.0));',
+      '  float spec=pow(max(0.0,dot(N,H)),28.0);',
+
+      '  vec3 col=BASE*0.07',              // deep shadow
+      '          +BASE*diff*3.4',          // lit ridges
+      '          +vec3(0.5,0.44,0.65)*spec*0.9;',  // specular sheen
+      '  gl_FragColor=vec4(col,1.0);',
+      '}'
+    ].join('\n');
+
+    function mkShader(type, src) {
+      var s = gl.createShader(type);
+      gl.shaderSource(s, src);
+      gl.compileShader(s);
+      if (!gl.getShaderParameter(s, gl.COMPILE_STATUS))
+        console.error('ClawShader:', gl.getShaderInfoLog(s));
+      return s;
+    }
+    var prog = gl.createProgram();
+    gl.attachShader(prog, mkShader(gl.VERTEX_SHADER, VERT));
+    gl.attachShader(prog, mkShader(gl.FRAGMENT_SHADER, FRAG));
+    gl.linkProgram(prog);
+    gl.useProgram(prog);
+
+    var buf = gl.createBuffer();
+    gl.bindBuffer(gl.ARRAY_BUFFER, buf);
+    gl.bufferData(gl.ARRAY_BUFFER, new Float32Array([-1,-1,1,-1,-1,1,1,1]), gl.STATIC_DRAW);
+    var aPos = gl.getAttribLocation(prog, 'a_pos');
+    gl.enableVertexAttribArray(aPos);
+    gl.vertexAttribPointer(aPos, 2, gl.FLOAT, false, 0, 0);
+
+    var U = {};
+    ['u_res','u_tip0','u_tip1','u_tip2','u_tip3','u_tip4','u_fwd','u_right','u_fade']
+      .forEach(function(n){ U[n] = gl.getUniformLocation(prog, n); });
+
+    /* ── Animation ──────────────────────────────────────────────────── */
+    // Three drag patterns in UV space (y-down: 0=top, 1=bottom)
+    // [startX, startY, endX, endY, rawFwdX, rawFwdY]
+    var PATTERNS = [
+      { s:[0.47,-0.22], e:[0.53,1.22], fd:[0.04,1.0]   },  // top → bottom (slight tilt)
+      { s:[-0.22,0.40], e:[1.22,0.60], fd:[1.0,0.10]   },  // left → right
+      { s:[0.82,-0.22], e:[0.18,1.22], fd:[-0.30,1.0]  },  // diagonal ↘ to ↗ across
+    ];
+
+    // Perpendicular offsets (spread of 5 fingers), fwd offsets (arch: middle leads)
+    var PERP = [-0.095,-0.048,0.0,0.048,0.095];
+    var FWDO = [-0.018,-0.009,0.0,-0.009,-0.018];
+
+    var FADE_IN  = 1.6;
+    var DRAG_DUR = 8.5;
+    var FADE_OUT = 1.8;
+    var PAUSE    = 4.0;
+
+    var rafId = null, t0 = null;
+    var phase = 'pause', phaseStart = -999, patIdx = 0;
+    var lastW = 0, lastH = 0;
+
+    function ease(t){ return t*t*(3.0-2.0*t); }
+
+    function render(now) {
+      if (!rafId) return;
+      if (t0 === null) t0 = now;
+      var T = (now - t0) * 0.001;
+      var dt = T - phaseStart;
+
+      // Phase transitions
+      if      (phase==='pause'   && dt>=PAUSE)    { patIdx=(patIdx+1)%PATTERNS.length; phase='fadein';  phaseStart=T; dt=0; }
+      else if (phase==='fadein'  && dt>=FADE_IN)  { phase='drag';    phaseStart=T; dt=0; }
+      else if (phase==='drag'    && dt>=DRAG_DUR) { phase='fadeout'; phaseStart=T; dt=0; }
+      else if (phase==='fadeout' && dt>=FADE_OUT) { phase='pause';   phaseStart=T; dt=0; }
+
+      var fade=0, dragT=0;
+      if      (phase==='fadein' ) { fade=Math.min(1,dt/FADE_IN);  dragT=0; }
+      else if (phase==='drag'   ) { fade=1; dragT=Math.min(1,dt/DRAG_DUR); }
+      else if (phase==='fadeout') { fade=Math.max(0,1-dt/FADE_OUT); dragT=1; }
+      dragT = ease(dragT);
+      fade  = fade*fade;   // ease-in so fingers appear gently
+
+      // Resize canvas to actual pixel dimensions (overlay is in a CSS transform)
+      var rect = canvas.getBoundingClientRect();
+      var dpr  = Math.min(window.devicePixelRatio||1, 2);
+      var pw   = Math.round(rect.width  * dpr);
+      var ph   = Math.round(rect.height * dpr);
+      if (pw !== lastW || ph !== lastH) {
+        canvas.width=pw; canvas.height=ph;
+        gl.viewport(0,0,pw,ph);
+        lastW=pw; lastH=ph;
+      }
+
+      // Compute hand position and finger tips
+      var pat = PATTERNS[patIdx];
+      var fdx=pat.fd[0], fdy=pat.fd[1];
+      var fl=Math.sqrt(fdx*fdx+fdy*fdy);
+      fdx/=fl; fdy/=fl;               // normalized fwd
+      var rx=fdy, ry=-fdx;            // right = fwd rotated 90° CW
+
+      var mx = pat.s[0]+(pat.e[0]-pat.s[0])*dragT;
+      var my = pat.s[1]+(pat.e[1]-pat.s[1])*dragT;
+
+      var tips=[];
+      for(var i=0;i<5;i++){
+        tips.push([
+          mx + rx*PERP[i] + fdx*FWDO[i],
+          my + ry*PERP[i] + fdy*FWDO[i]
+        ]);
+      }
+
+      gl.uniform2f(U.u_res, pw, ph);
+      for(var j=0;j<5;j++) gl.uniform2f(U['u_tip'+j], tips[j][0], tips[j][1]);
+      gl.uniform2f(U.u_fwd,   fdx, fdy);
+      gl.uniform2f(U.u_right, rx,  ry );
+      gl.uniform1f(U.u_fade,  fade);
+
+      gl.drawArrays(gl.TRIANGLE_STRIP, 0, 4);
+      rafId = requestAnimationFrame(render);
+    }
+
+    function start() {
+      if (rafId) return;
+      t0 = null; phaseStart = -999; phase = 'pause';
+      rafId = requestAnimationFrame(render);
+    }
+    function stop() {
+      if (rafId) { cancelAnimationFrame(rafId); rafId = null; }
+    }
+
+    // Start/stop based on overlay display state
+    var obs = new MutationObserver(function(){
+      if (overlay.style.display === 'none') stop();
+      else if (!rafId) start();
+    });
+    obs.observe(overlay, { attributes:true, attributeFilter:['style'] });
+
+    // Start when fonts are ready and overlay is visible
+    document.fonts.ready.then(function(){ start(); });
+  })();
+  </script>
+
   <script type="module" src="/src/main.ts"></script>
 </body>
 </html>
