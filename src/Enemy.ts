@@ -161,7 +161,7 @@ export class Enemy {
 
   /** Compute scene-light brightness at the enemy's position and apply to material color. */
   updateLighting(lights: THREE.Light[]) {
-    let brightness = 0.12;
+    let brightness = 0;
     for (const light of lights) {
       if (!(light instanceof THREE.PointLight)) continue;
       const dx = this.pos.x - light.position.x;
