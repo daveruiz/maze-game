@@ -481,17 +481,19 @@
       'uniform vec2  u_fwd,u_right;',
       'uniform float u_fade;',
 
-      'const vec3  BASE = vec3(0.052,0.045,0.062);',
+      'const vec3  BASE = vec3(0.026,0.022,0.031);',
       'const vec3  LDIR = vec3(-0.466,-0.544,0.699);',
-      'const float HS   = 3.8;',
+      'const float HS   = 5.0;',
 
       // Trail bump: narrow cross-section (nail), exponential decay behind the tip.
       // along<0 = behind tip (fabric returning) → main trail
       // along>0 = ahead of tip (not yet reached) → tiny pre-tension
-      'float fH(vec2 uv,vec2 tip,float w,float tl){',
-      '  vec2 d=uv-tip;',
-      '  float p=dot(d,u_right);',
-      '  float a=dot(d,u_fwd);',
+      'float fH(vec2 uv,vec2 tip,float ar,float w,float tl){',
+      '  vec2 d=vec2((uv.x-tip.x)*ar,uv.y-tip.y);',
+      '  vec2 fwd=normalize(vec2(u_fwd.x*ar,u_fwd.y));',
+      '  vec2 rgt=normalize(vec2(u_right.x*ar,u_right.y));',
+      '  float p=dot(d,rgt);',
+      '  float a=dot(d,fwd);',
       '  float cx=exp(-p*p/(w*w));',
       '  float tr;',
       '  if(a<=0.0){ float t=-a/tl; tr=exp(-t*4.0); }',
@@ -500,15 +502,16 @@
       '}',
 
       'float height(vec2 uv){',
+      '  float ar=u_res.x/u_res.y;',
       '  float h=0.0;',
-      '  h+=fH(uv,u_tip0,0.0075,0.12);',
-      '  h+=fH(uv,u_tip1,0.0095,0.15);',
-      '  h+=fH(uv,u_tip2,0.0110,0.18);',
-      '  h+=fH(uv,u_tip3,0.0095,0.15);',
-      '  h+=fH(uv,u_tip4,0.0075,0.12);',
+      '  h+=fH(uv,u_tip0,ar,0.011,0.16);',
+      '  h+=fH(uv,u_tip1,ar,0.014,0.20);',
+      '  h+=fH(uv,u_tip2,ar,0.016,0.24);',
+      '  h+=fH(uv,u_tip3,ar,0.014,0.20);',
+      '  h+=fH(uv,u_tip4,ar,0.011,0.16);',
       '  h*=u_fade;',
-      '  float wx=sin(uv.x*140.0)*sin(uv.y*2.5);',
-      '  float wy=sin(uv.y*140.0)*sin(uv.x*2.5);',
+      '  float wx=sin(uv.x*140.0)*sin(uv.y*2.5/ar);',
+      '  float wy=sin(uv.y*140.0/ar)*sin(uv.x*2.5);',
       '  h+=wx*wy*0.018;',
       '  return h;',
       '}',
@@ -517,9 +520,10 @@
       '  vec2 uv=gl_FragCoord.xy/u_res;',
       '  uv.y=1.0-uv.y;',
       '  float h =height(uv);',
-      '  float e =1.6/min(u_res.x,u_res.y);',
-      '  float hx=height(uv+vec2(e,0.0));',
-      '  float hy=height(uv+vec2(0.0,e));',
+      '  float ex=1.6/u_res.x;',
+      '  float ey=1.6/u_res.y;',
+      '  float hx=height(uv+vec2(ex,0.0));',
+      '  float hy=height(uv+vec2(0.0,ey));',
       '  vec3 N=normalize(vec3(-(hx-h)*HS,-(hy-h)*HS,1.0));',
       '  float diff=max(0.0,dot(N,LDIR));',
       '  vec3  H=normalize(LDIR+vec3(0.0,0.0,1.0));',
@@ -567,13 +571,13 @@
       [ 0.50,  0.94],   // ring
       [ 1.04,  0.66],   // pinky  – short
     ];
-    var HAND_SIZE = 0.078;   // UV units per anatomy unit (~9% screen height)
+    var HAND_SIZE = 0.115;   // UV units per anatomy unit
 
     /* ── Animation state machine ─────────────────────────────────────── */
     // Claw drags a short distance across a random area, fading in at the
     // start and out at the end (sine envelope — no hard cut).
     var DRAG_DUR = 7.0;   // s — total duration of one drag pass
-    var IDLE_DUR = 2.0;   // s — pause between drags
+    var IDLE_DUR = 5.0;   // s — pause between drags
 
     var rafId = null, t0 = null;
     var phase = 'idle', phaseStart = -999;
