@@ -309,6 +309,7 @@ export class Game {
       this.mobileControls.init();
     } else {
       this.mobileControls.setPlayer(this.player);
+      if (inputMode.isTouch) this.mobileControls.show();
     }
 
     // Gamepad: update player reference
@@ -1371,6 +1372,7 @@ if (caught && !caughtBy) {
       const overlay = document.getElementById('overlay')!;
       document.getElementById('start-btn')!.textContent = 'RETRY';
       overlay.style.display = 'flex';
+      this.mobileControls?.hide(); // hide joystick so it doesn't block the RETRY button
       // Double-rAF ensures display:flex is painted before transitioning opacity
       requestAnimationFrame(() => requestAnimationFrame(() => {
         overlay.classList.add('ready');
