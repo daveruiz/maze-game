@@ -496,12 +496,12 @@
       '  float a=dot(d,fwd);',
       '  float cx=exp(-p*p/(w*w));',
       '  float tr;',
-      '  if(a<=0.0){ float t=-a/tl; tr=exp(-t*4.0); }',
-      '  else      { float t= a/0.014; tr=exp(-t*t*4.0)*0.16; }',
+      '  if(a<=0.0){ float t=-a/tl;  tr=exp(-t*4.0); }',
+      '  else      { float t= a/0.010; tr=exp(-t*4.0); }',
       '  return cx*tr;',
       '}',
 
-      'float height(vec2 uv){',
+      'float bumpH(vec2 uv){',
       '  float ar=u_res.x/u_res.y;',
       '  float h=0.0;',
       '  h+=fH(uv,u_tip0,ar,0.011,0.16);',
@@ -509,27 +509,37 @@
       '  h+=fH(uv,u_tip2,ar,0.016,0.24);',
       '  h+=fH(uv,u_tip3,ar,0.014,0.20);',
       '  h+=fH(uv,u_tip4,ar,0.011,0.16);',
-      '  h*=u_fade;',
+      '  return h;',
+      '}',
+
+      'float weaveH(vec2 uv){',
+      '  float ar=u_res.x/u_res.y;',
       '  float wx=sin(uv.x*140.0)*sin(uv.y*2.5/ar);',
       '  float wy=sin(uv.y*140.0/ar)*sin(uv.x*2.5);',
-      '  h+=wx*wy*0.018;',
-      '  return h;',
+      '  return wx*wy*0.018;',
       '}',
 
       'void main(){',
       '  vec2 uv=gl_FragCoord.xy/u_res;',
       '  uv.y=1.0-uv.y;',
-      '  float h =height(uv);',
       '  float ex=1.6/u_res.x;',
       '  float ey=1.6/u_res.y;',
-      '  float hx=height(uv+vec2(ex,0.0));',
-      '  float hy=height(uv+vec2(0.0,ey));',
+      '  float hc =weaveH(uv);',
+      '  float hcx=weaveH(uv+vec2(ex,0.0));',
+      '  float hcy=weaveH(uv+vec2(0.0,ey));',
+      '  vec3 Nc=normalize(vec3(-(hcx-hc)*HS,-(hcy-hc)*HS,1.0));',
+      '  float diffc=max(0.0,dot(Nc,LDIR));',
+      '  vec3 colc=BASE*0.07+BASE*diffc*3.4;',
+      '  float hb =bumpH(uv);',
+      '  float h  =hc+hb;',
+      '  float hx =hcx+bumpH(uv+vec2(ex,0.0));',
+      '  float hy =hcy+bumpH(uv+vec2(0.0,ey));',
       '  vec3 N=normalize(vec3(-(hx-h)*HS,-(hy-h)*HS,1.0));',
       '  float diff=max(0.0,dot(N,LDIR));',
       '  vec3  H=normalize(LDIR+vec3(0.0,0.0,1.0));',
       '  float spec=pow(max(0.0,dot(N,H)),28.0);',
-      '  vec3 col=BASE*0.07+BASE*diff*3.4+vec3(0.5,0.44,0.65)*spec*0.9;',
-      '  gl_FragColor=vec4(col,1.0);',
+      '  vec3 colb=BASE*0.07+BASE*diff*3.4+vec3(0.5,0.44,0.65)*spec*0.9;',
+      '  gl_FragColor=vec4(mix(colc,colb,u_fade),1.0);',
       '}'
     ].join('\n');
 
@@ -587,12 +597,12 @@
     var lastW = 0, lastH = 0;
 
     function newDrag() {
-      handAngle = (Math.random() - 0.5) * Math.PI * 1.6;   // full random angle
+      handAngle = (Math.random() - 0.5) * Math.PI * (160/180);  // ±80° from straight down
       var fdx = Math.sin(handAngle);
       var fdy = Math.cos(handAngle);
-      var dist = 0.18 + Math.random() * 0.14;              // 18–32% of screen
+      var dist = 0.18 + Math.random() * 0.14;
       startX = 0.15 + Math.random() * 0.70;
-      startY = 0.15 + Math.random() * 0.70;
+      startY = 0.05 + Math.random() * 0.55;   // bias toward top for downward motion
       endX = startX + fdx * dist;
       endY = startY + fdy * dist;
     }
@@ -641,8 +651,8 @@
         var pr = FINGERS[i][0];
         var pf = FINGERS[i][1];
         tips.push([
-          mx + rx * pr * HAND_SIZE + fdx * pf * HAND_SIZE,
-          my + ry * pr * HAND_SIZE + fdy * pf * HAND_SIZE,
+          mx + rx * pr * HAND_SIZE - fdx * pf * HAND_SIZE,
+          my + ry * pr * HAND_SIZE - fdy * pf * HAND_SIZE,
         ]);
       }
 
