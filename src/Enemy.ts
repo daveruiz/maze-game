@@ -27,7 +27,7 @@ const ENEMY_MODEL_HEIGHT = 2.31;
 
 // Material brightness multiplier applied to the GLB's base colors.
 // 1.0 = original texture colours, 0.0 = pitch black.  Try 0.3–0.6 for horror.
-const ENEMY_BRIGHTNESS = 0.75;
+const ENEMY_BRIGHTNESS = 0.9;
 
 const BASE_SEARCH_SPEED = 0.7;
 const BASE_CHASE_SPEED  = 5.0;
@@ -276,41 +276,42 @@ export class Enemy {
 
   /**
    * Decide which animation should play each frame, then tick the mixer.
+   * @param actualSpeed  Real XZ movement speed this frame (world units / second).
+   *                     Drives timeScale so feet always match ground travel.
    */
-  private updateAnimationState(dt: number) {
+  private updateAnimationState(dt: number, actualSpeed = 0) {
     if (!this.modelReady || !this.mixer) return;
-    this.mixer.update(dt);
 
     if (this.caughtPlayer) {
       this.playAnimation('Injured_Walk', 0.15, false); // dance
       this.mixer.timeScale = 1.0;
+      this.mixer.update(dt);
       return;
     }
 
-    // Current movement speed this frame — used to sync animation playback rate.
-    const currentSpeed = BASE_SEARCH_SPEED + (BASE_CHASE_SPEED - BASE_SEARCH_SPEED) * this.suspicion;
-    // Reference speed at which each clip was authored (tune if feet still slide).
-    const INJURED_WALK_REF_SPEED = 1.5;  // 'Running' clip looks right at this speed
-    const NORMAL_WALK_REF_SPEED  = 3.0;  // 'Alert' clip looks right at this speed
+    // Reference speeds: the world-unit/s at which each clip looks natural at 1× playback.
+    // Tune these if feet slide or cycle too fast.
+    const INJURED_WALK_REF = 1.4;  // 'Running' clip  (slow injured creep)
+    const NORMAL_WALK_REF  = 3.0;  // 'Alert'   clip  (brisk walk)
+    const RUN_REF          = BASE_CHASE_SPEED; // 'Skip_Forward' clip (full sprint)
 
     if (this.state === EnemyState.CHASING) {
       this.playAnimation('Skip_Forward', 0.25);
-      this.mixer.timeScale = 1.0;
+      this.mixer.timeScale = Math.max(0.3, actualSpeed / RUN_REF);
     } else {
       if (this.investigateWaiting) {
-        // Stopped — looking around.
         this.playAnimation('Boom_Dance', 0.3);
-        this.mixer.timeScale = 1.0;
+        this.mixer.timeScale = 1.0;                               // idle — play at natural speed
       } else if (this.suspicion >= 0.55 || this.investigateTimer > 0) {
-        // Fast enough to warrant the normal walk clip.
         this.playAnimation('Alert', 0.3);
-        this.mixer.timeScale = Math.max(0.4, currentSpeed / NORMAL_WALK_REF_SPEED);
+        this.mixer.timeScale = Math.max(0.2, actualSpeed / NORMAL_WALK_REF);
       } else {
-        // Slow creep — injured walk, speed-matched so feet don't slide.
         this.playAnimation('Running', 0.4);
-        this.mixer.timeScale = Math.max(0.2, currentSpeed / INJURED_WALK_REF_SPEED);
+        this.mixer.timeScale = Math.max(0.15, actualSpeed / INJURED_WALK_REF);
       }
     }
+
+    this.mixer.update(dt);
   }
 
   /**
@@ -621,8 +622,9 @@ export class Enemy {
         break;
     }
 
-    // ── Chains volume scales with movement speed ─────────────────────────
+    // ── Chains volume + animation speed scale with actual movement ───────
     const movedXZ = Math.sqrt((this.pos.x - preMovX) ** 2 + (this.pos.z - preMovZ) ** 2);
+    const actualSpeed = dt > 0 ? movedXZ / dt : 0;
     const chainSpeedFrac = Math.min(1, movedXZ / Math.max(0.0001, dt * BASE_CHASE_SPEED * speedMult));
     this.audio.updateChannelSpeed(this.channelId, chainSpeedFrac);
 
@@ -648,7 +650,7 @@ export class Enemy {
     }
 
     // ── Animation update ─────────────────────────────────────────────────
-    this.updateAnimationState(dt);
+    this.updateAnimationState(dt, actualSpeed);
 
     // ── Audio occlusion: BFS-based sound direction + wall count ────────
     this.soundOcclusionTimer += dt;

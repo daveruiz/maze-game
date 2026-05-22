@@ -47,6 +47,7 @@ export class Game {
   private debugRevealMap = false;
   private debugFastForward = false;
   private debugSoundField = false;
+  private debugInfiniteResources = false;
   private debugAmbient!: THREE.AmbientLight;
   private debugMenuOpen = false;
   private mobileControls: MobileControls | null = null;
@@ -472,6 +473,12 @@ export class Game {
 
     // Decay player audibility from last frame
     this.audio.tickAudibility(dt);
+
+    // Debug: infinite flashlight + stamina
+    if (this.debugInfiniteResources) {
+      this.flashBattery = 100;
+      if (this.player) this.player.stamina = 100;
+    }
 
     // Sync virtual controls before player tick (touch + gamepad)
     this.mobileControls?.update();
@@ -1170,6 +1177,12 @@ if (caught && !caughtBy) {
       }
     });
 
+    // Infinite flashlight + stamina
+    const irCb = document.getElementById('dbg-infiniteresources') as HTMLInputElement;
+    irCb.addEventListener('change', () => {
+      this.debugInfiniteResources = irCb.checked;
+    });
+
     // Pixel scale buttons (resolution downscale for performance)
     const baseDPR = Math.min(window.devicePixelRatio, 2);
     menu.querySelectorAll<HTMLButtonElement>('button[data-pixelscale]').forEach(btn => {
@@ -1291,6 +1304,8 @@ if (caught && !caughtBy) {
     (document.getElementById('dbg-revealmap') as HTMLInputElement).checked = false;
     (document.getElementById('dbg-fastforward') as HTMLInputElement).checked = false;
     (document.getElementById('dbg-nodetection') as HTMLInputElement).checked = false;
+    (document.getElementById('dbg-infiniteresources') as HTMLInputElement).checked = false;
+    this.debugInfiniteResources = false;
     // Clear dynamic objects (keep camera)
     this.scene.children
       .filter(c => c !== this.camera)
