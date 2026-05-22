@@ -198,7 +198,7 @@ function highlightActiveZone(active: Zone) {
 // Load model
 // ─────────────────────────────────────────────────────────────────────────────
 const loader = new GLTFLoader();
-loader.load('/enemynew.glb', gltf => {
+loader.load('./enemynew.glb', gltf => {
   document.getElementById('loading')!.style.display = 'none';
 
   const model = skeletonClone(gltf.scene) as THREE.Group;
@@ -312,7 +312,7 @@ loader.load('/enemynew.glb', gltf => {
 
 }, undefined, err => {
   document.getElementById('loading')!.innerHTML =
-    `<span style="color:#f66">Failed to load /enemynew.glb</span><br><small>${err}</small>`;
+    `<span style="color:#f66">Failed to load enemynew.glb</span><br><small>${err}</small>`;
   console.error('[anim-test] load error', err);
 });
 

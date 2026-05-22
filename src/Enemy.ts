@@ -14,7 +14,7 @@ let _gltfCache: Promise<GltfCache> | null = null;
 function loadEnemyGltf(): Promise<GltfCache> {
   if (!_gltfCache) {
     const loader = new GLTFLoader();
-    _gltfCache = loader.loadAsync('/enemynew.glb').then(g => ({
+    _gltfCache = loader.loadAsync('./enemynew.glb').then(g => ({
       scene: g.scene as THREE.Group,
       animations: g.animations,
     }));
