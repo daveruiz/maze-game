@@ -29,8 +29,8 @@ const ENEMY_MODEL_HEIGHT = 2.31;
 // 1.0 = original texture colours, 0.0 = pitch black.  Try 0.3–0.6 for horror.
 const ENEMY_BRIGHTNESS = 0.9;
 
-const BASE_SEARCH_SPEED = 0.7;
-const BASE_CHASE_SPEED  = 5.0;
+const BASE_SEARCH_SPEED = 1.4;
+const BASE_CHASE_SPEED  = 3.75;
 const SPEED_SCALE_PER_FLOOR = 0.10; // +10% per floor
 const SIGHT_RANGE       = 14;   // world units (flashlight on)
 const LOSE_RANGE        = 20;   // enemy loses sight beyond this (flashlight on)

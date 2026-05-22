@@ -1072,7 +1072,7 @@ export class MazeRenderer {
     uv.needsUpdate = true;
 
     const m = new THREE.Mesh(geo, mat);
-    m.castShadow = true;
+    m.castShadow = false;   // only enemies cast shadows
     m.receiveShadow = true;
     return m;
   }

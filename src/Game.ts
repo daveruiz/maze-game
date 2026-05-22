@@ -117,6 +117,7 @@ export class Game {
     this.renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2) / 4);
     this.renderer.setSize(window.innerWidth, window.innerHeight);
     this.renderer.shadowMap.enabled = true;
+    this.renderer.shadowMap.type = THREE.BasicShadowMap; // hard shadows, cheapest
     container.appendChild(this.renderer.domElement);
 
     // Camera
@@ -126,10 +127,15 @@ export class Game {
     this.scene = new THREE.Scene();
     this.scene.add(this.camera);
 
-    // Flashlight (SpotLight on camera)
+    // Flashlight (SpotLight on camera) — casts hard shadows from enemies
     this.flashlight = new THREE.SpotLight(0xffffff, 28.0, 140, Math.PI / 4, 0.4, 1.0);
     this.flashlight.position.set(0, -0.15, 0);
     this.flashlight.target.position.set(0, -0.1, -1);
+    this.flashlight.castShadow = true;
+    this.flashlight.shadow.mapSize.set(512, 512);
+    this.flashlight.shadow.camera.near = 0.5;
+    this.flashlight.shadow.camera.far = 40;
+    this.flashlight.shadow.bias = -0.002;
     this.camera.add(this.flashlight);
     this.camera.add(this.flashlight.target);
 
@@ -188,6 +194,9 @@ export class Game {
     });
     document.addEventListener('mousemove', () => {
       this.gamepad.onKeyboardInput();
+    });
+    document.addEventListener('mousedown', e => {
+      if (e.button === 0) this.toggleFlashlight(); // left click toggles flashlight
     });
 
     this.setupDebugMenu();
@@ -365,10 +374,18 @@ export class Game {
     this.mazeRenderer.floorLights = this.floorLights;
 
     // Create a fixed pool of lantern lights (reused each frame for nearest lanterns)
+    // First 2 cast shadows (closest to player), rest are light-only
     this.lanternPool = [];
     for (let i = 0; i < this.LANTERN_POOL_SIZE; i++) {
       const light = new THREE.PointLight(0xbfa687, 45.0, 18, 1.5);
       light.position.set(0, this.LANTERN_PARK_Y, 0);
+      if (i < 2) {
+        light.castShadow = true;
+        light.shadow.mapSize.set(256, 256);
+        light.shadow.camera.near = 0.3;
+        light.shadow.camera.far = 18;
+        light.shadow.bias = -0.003;
+      }
       this.scene.add(light);
       this.lanternPool.push(light);
       this.lights.push(light);
