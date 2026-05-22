@@ -169,7 +169,7 @@ export class Enemy {
       const dist = Math.sqrt(dx * dx + dz * dz);
       if (dist < light.distance) {
         const t = 1 - dist / light.distance;
-        brightness += t * t * light.intensity * 0.15;
+        brightness += t * t * light.intensity * 0.03;
       }
     }
     this.mat.color.setScalar(Math.min(1.0, brightness));
