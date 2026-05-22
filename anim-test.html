@@ -1,0 +1,210 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Enemy Anim Speed Tester</title>
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+    body {
+      background: #0e0e0e; color: #ccc;
+      font-family: 'Segoe UI', system-ui, sans-serif;
+      display: flex; flex-direction: column; height: 100vh; overflow: hidden;
+    }
+
+    /* ── top status bar ── */
+    #topbar {
+      background: #141414; border-bottom: 1px solid #2a2a2a;
+      padding: 6px 16px; display: flex; align-items: center; gap: 20px; flex-shrink: 0;
+    }
+    #topbar h1 { font-size: 13px; color: #777; font-weight: 400; margin-right: 8px; }
+    .st { font-size: 13px; display: flex; gap: 5px; align-items: baseline; }
+    .st-label { color: #555; font-size: 11px; }
+    .st-val { color: #4af; font-weight: 700; font-size: 15px; min-width: 4ch; }
+    #st-mode { color: #fa4; }
+
+    /* ── main layout ── */
+    #main { display: flex; flex: 1; overflow: hidden; }
+    #canvas-wrap { flex: 1; position: relative; min-width: 0; overflow: hidden; }
+    #canvas-wrap canvas { display: block; }
+    #loading {
+      position: absolute; inset: 0; background: rgba(0,0,0,.8);
+      display: flex; flex-direction: column; align-items: center; justify-content: center;
+      gap: 10px; font-size: 14px; color: #888; z-index: 50;
+    }
+    .spinner {
+      width: 32px; height: 32px; border: 3px solid #333; border-top-color: #4af;
+      border-radius: 50%; animation: spin 0.7s linear infinite;
+    }
+    @keyframes spin { to { transform: rotate(360deg); } }
+
+    /* ── sidebar ── */
+    #sidebar {
+      width: 350px; background: #141414; border-left: 1px solid #222;
+      display: flex; flex-direction: column; overflow-y: auto; overflow-x: hidden;
+      flex-shrink: 0;
+    }
+    .panel { padding: 12px 14px; border-bottom: 1px solid #1e1e1e; }
+    .panel-title {
+      font-size: 10px; text-transform: uppercase; letter-spacing: 1.2px;
+      color: #444; margin-bottom: 10px;
+    }
+
+    /* ── big speed slider ── */
+    #speed-row { display: flex; align-items: center; gap: 10px; margin-bottom: 4px; }
+    #speed-slider { flex: 1; height: 6px; cursor: pointer; accent-color: #4af; }
+    #speed-val {
+      font-size: 20px; font-weight: 700; color: #4af;
+      min-width: 58px; text-align: right; font-variant-numeric: tabular-nums;
+    }
+    #speed-ticks {
+      display: flex; justify-content: space-between;
+      font-size: 10px; color: #333; padding: 0 2px;
+    }
+
+    /* ── range bar ── */
+    #rbar-outer { margin: 4px 0 8px; }
+    #rbar {
+      position: relative; height: 34px; border-radius: 4px;
+      overflow: visible; user-select: none;
+    }
+    .rzone {
+      position: absolute; top: 0; height: 100%;
+      display: flex; align-items: center; justify-content: center;
+      font-size: 10px; font-weight: 700; letter-spacing: 0.5px;
+      border-radius: 3px; pointer-events: none;
+      overflow: hidden; white-space: nowrap; color: rgba(255,255,255,0.75);
+      transition: filter 0.15s, opacity 0.15s;
+    }
+    .rzone.active { filter: brightness(1.6); opacity: 1 !important; }
+    .rzone:not(.active) { opacity: 0.4; }
+    .rhandle {
+      position: absolute; top: -5px; width: 14px; height: 44px;
+      background: #eee; border: 2px solid #666; border-radius: 4px;
+      cursor: ew-resize; transform: translateX(-50%); z-index: 10;
+      transition: border-color 0.1s;
+    }
+    .rhandle:hover, .rhandle.dragging { border-color: #4af; background: #fff; }
+    #speed-needle {
+      position: absolute; top: -6px; width: 2px; height: 46px;
+      background: rgba(255,255,255,0.9); pointer-events: none;
+      z-index: 8; border-radius: 1px;
+    }
+    #rbar-ticks {
+      display: flex; justify-content: space-between;
+      font-size: 10px; color: #333; padding: 0 2px; margin-top: 2px;
+    }
+
+    /* ── zone cards ── */
+    .zcard { border-radius: 6px; padding: 9px 10px; margin-bottom: 7px; }
+    .zcard-head { display: flex; align-items: center; gap: 8px; margin-bottom: 3px; }
+    .zcard-dot { width: 8px; height: 8px; border-radius: 50%; flex-shrink: 0; }
+    .zcard-name select {
+      background: #0d0d0d; border: 1px solid #333; color: inherit;
+      padding: 2px 4px; font-size: 12px; font-weight: 700; border-radius: 3px; cursor: pointer;
+    }
+    .zcard-range { font-size: 11px; color: #666; margin-bottom: 6px; }
+    .zcard-fields { display: grid; grid-template-columns: 1fr 1fr; gap: 5px 10px; }
+    .zfield label { display: block; font-size: 10px; color: #666; margin-bottom: 2px; }
+    .zfield input {
+      width: 100%; background: #0d0d0d; border: 1px solid #2a2a2a;
+      color: #ccc; padding: 3px 6px; font-size: 12px; border-radius: 3px;
+    }
+    .zfield input:focus { outline: none; border-color: #4af; }
+    .zcard-scales { margin-top: 6px; font-size: 11px; color: #999; display: flex; gap: 14px; flex-wrap: wrap; }
+    .zcard-scales span b { color: #ddd; }
+
+    /* ── state anims ── */
+    .anim-btns { display: flex; flex-wrap: wrap; gap: 5px; }
+    .abtn {
+      background: #1c1c1c; border: 1px solid #303030;
+      color: #aaa; padding: 5px 9px; border-radius: 4px;
+      cursor: pointer; font-size: 11px; transition: background 0.1s, border-color 0.1s;
+    }
+    .abtn:hover { background: #252525; border-color: #4af; color: #ddd; }
+    .abtn.active { background: #0a2540; border-color: #4af; color: #4af; }
+
+    /* ── export ── */
+    #export-btn {
+      width: 100%; background: #0a200a; border: 1px solid #1a4a1a;
+      color: #7c9; padding: 7px; border-radius: 5px; cursor: pointer;
+      font-size: 12px; margin-top: 6px;
+    }
+    #export-btn:hover { background: #0e2a0e; }
+    #export-out {
+      margin-top: 8px; background: #090f09; border: 1px solid #1a3a1a;
+      border-radius: 4px; padding: 8px; font-family: monospace; font-size: 10.5px;
+      color: #7c9; white-space: pre; overflow-x: auto; display: none; line-height: 1.5;
+    }
+    #copy-toast { display: none; color: #4af; font-size: 11px; margin-top: 4px; text-align: center; }
+  </style>
+</head>
+<body>
+
+<div id="topbar">
+  <h1>🎭 Anim Speed Tester</h1>
+  <div class="st"><span class="st-label">Playing</span><span class="st-val" id="st-anim">—</span></div>
+  <div class="st"><span class="st-label">TimeScale</span><span class="st-val" id="st-ts">—</span></div>
+  <div class="st"><span class="st-label">Speed</span><span class="st-val" id="st-spd">0.00</span><span class="st-label">m/s</span></div>
+  <div class="st"><span class="st-label">Mode</span><span class="st-val st-mode" id="st-mode">speed</span></div>
+  <div class="st"><span class="st-label">Suspicion</span><span class="st-val" id="st-sus" style="color:#f84">0.00</span></div>
+</div>
+
+<div id="main">
+  <div id="canvas-wrap">
+    <div id="loading"><div class="spinner"></div>Loading enemy.glb…</div>
+  </div>
+
+  <div id="sidebar">
+    <div class="panel">
+      <div class="panel-title">Movement Speed</div>
+      <div id="speed-row">
+        <input type="range" id="speed-slider" min="0" max="8" step="0.02" value="0.7">
+        <div id="speed-val">0.70</div>
+      </div>
+      <div id="speed-ticks">
+        <span>0</span><span>1</span><span>2</span><span>3</span><span>4</span>
+        <span>5</span><span>6</span><span>7</span><span>8 m/s</span>
+      </div>
+    </div>
+
+    <div class="panel">
+      <div class="panel-title">Suspicion  <span style="color:#333;font-size:9px;text-transform:none;letter-spacing:0">— blends Alert posture on top of movement</span></div>
+      <div id="speed-row">
+        <input type="range" id="suspicion-slider" min="0" max="1" step="0.01" value="0" style="accent-color:#f84">
+        <div id="suspicion-val" style="color:#f84">0.00</div>
+      </div>
+      <div id="speed-ticks">
+        <span>0</span><span style="flex:1"></span><span>0.5</span><span style="flex:1"></span><span>1.0</span>
+      </div>
+    </div>
+
+    <div class="panel">
+      <div class="panel-title">Speed Zones  <span style="color:#333;font-size:9px;text-transform:none;letter-spacing:0">— drag the white handles</span></div>
+      <div id="rbar-outer">
+        <div id="rbar"></div>
+        <div id="rbar-ticks">
+          <span>0</span><span>1</span><span>2</span><span>3</span><span>4</span>
+          <span>5</span><span>6</span><span>7</span><span>8</span>
+        </div>
+      </div>
+      <div id="zone-cards"></div>
+      <button id="export-btn">📋 Copy Enemy.ts config to clipboard</button>
+      <div id="copy-toast">✓ Copied!</div>
+      <div id="export-out"></div>
+    </div>
+
+    <div class="panel">
+      <div class="panel-title">Force-play any animation</div>
+      <div style="font-size:11px;color:#444;margin-bottom:8px;">Bypasses speed logic — useful for isolating a single clip.</div>
+      <div class="anim-btns" id="anim-btns"></div>
+      <div style="margin-top:8px;">
+        <button class="abtn" id="btn-auto" style="width:100%;text-align:center;">↩ Follow speed zones</button>
+      </div>
+    </div>
+  </div>
+</div>
+
+<script type="module" src="/src/anim-test.ts"></script>
+</body>
+</html>

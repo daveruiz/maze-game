@@ -69,6 +69,8 @@ export class Game {
   private deathEnemy: Enemy | null = null;
   private deathYaw = 0;
   private deathPitch = 0;
+  private deathStartPos = new THREE.Vector3();
+  private deathMaxStumble = 0.6;
 
   // Items
   private items: Item[] = [];
@@ -411,30 +413,62 @@ export class Game {
       const vhs = Math.min(1.0, this.deathTimer / 2.0);
       this.horrorPass.uniforms['vhsIntensity'].value = vhs;
 
-      // Rotate camera to face the enemy's face (3/4 height)
+      // Camera stumble: small backward step away from enemy + shake
       if (this.deathEnemy) {
         const ep = this.deathEnemy.getPosition();
         const pp = this.player.getPosition();
         const dx = ep.x - pp.x, dz = ep.z - pp.z;
-        const targetYaw = Math.atan2(-dx, -dz);
-        // Aim at 3/4 of enemy height (face level)
-        const faceY = ep.y + 0.5;  // offset up toward face
-        const dy = faceY - pp.y;
         const hDist = Math.sqrt(dx * dx + dz * dz);
-        const targetPitch = Math.atan2(dy, hDist);
+
+        // Direction away from enemy (normalized)
+        const awayX = hDist > 0.01 ? -dx / hDist : 0;
+        const awayZ = hDist > 0.01 ? -dz / hDist : 0;
+
+        // Stumble backward: ease-out over 1s, max 0.6 units back (subtle)
+        const stumbleT = Math.min(1, this.deathTimer / 1.0);
+        const stumbleEased = 1 - (1 - stumbleT) * (1 - stumbleT); // ease-out
+        // Cap distance by wall check — don't push through walls
+        const maxStumble = this.deathMaxStumble;
+        const stumbleDist = stumbleEased * maxStumble;
+        const camX = this.deathStartPos.x + awayX * stumbleDist;
+        const camZ = this.deathStartPos.z + awayZ * stumbleDist;
+
+        // Camera shake: rapid random offsets that decay over time
+        const shakeIntensity = Math.min(1, this.deathTimer / 0.3) * Math.max(0, 1 - this.deathTimer / 2.5);
+        const shakeX = (Math.sin(this.deathTimer * 37.3) * Math.cos(this.deathTimer * 23.1)) * 0.03 * shakeIntensity;
+        const shakeY = (Math.cos(this.deathTimer * 41.7) * Math.sin(this.deathTimer * 29.3)) * 0.02 * shakeIntensity;
+
+        // Also sink camera slightly (stumble down)
+        const sinkY = stumbleEased * 0.15;
+
+        this.camera.position.set(
+          camX + shakeX,
+          this.deathStartPos.y - sinkY + shakeY,
+          camZ,
+        );
+
+        // Rotate camera to face the enemy's head bone
+        const headPos = this.deathEnemy.getHeadPosition();
+        const cdx = headPos.x - this.camera.position.x;
+        const cdz = headPos.z - this.camera.position.z;
+        const targetYaw = Math.atan2(-cdx, -cdz);
+        const cdy = headPos.y - this.camera.position.y;
+        const cHDist = Math.sqrt(cdx * cdx + cdz * cdz);
+        const targetPitch = Math.atan2(cdy, cHDist);
 
         // Smoothly rotate toward enemy (fast snap)
         const lerpSpeed = 12.0 * dt;
-        // Shortest rotation path for yaw
         let yawDiff = targetYaw - this.deathYaw;
         if (yawDiff > Math.PI) yawDiff -= 2 * Math.PI;
         if (yawDiff < -Math.PI) yawDiff += 2 * Math.PI;
         this.deathYaw += yawDiff * lerpSpeed;
         this.deathPitch += (targetPitch - this.deathPitch) * lerpSpeed;
 
+        // Add shake to rotation too
+        const rotShake = shakeIntensity * 0.02;
         this.camera.rotation.order = 'YXZ';
-        this.camera.rotation.y = this.deathYaw;
-        this.camera.rotation.x = this.deathPitch;
+        this.camera.rotation.y = this.deathYaw + Math.sin(this.deathTimer * 31) * rotShake;
+        this.camera.rotation.x = this.deathPitch + Math.cos(this.deathTimer * 43) * rotShake;
       }
 
       // Phase 1 (0–2.5s): FOV narrows 75 → 45
@@ -455,6 +489,11 @@ export class Game {
         this.camera.rotation.z = eased * 0.15;  // ~8.6° max roll
       }
       this.camera.updateProjectionMatrix();
+
+      // Keep the caught enemy's attack animation playing + face the player
+      if (this.deathEnemy) {
+        this.deathEnemy.tickMixer(dt, this.player.getPosition());
+      }
 
       this.horrorPass.uniforms['time'].value = t;
       this.composer.render();
@@ -664,12 +703,52 @@ if (caught && !caughtBy) {
     this.dying = true;
     this.deathTimer = 0;
     this.deathEnemy = enemy;
-    // Capture current camera rotation as starting point
-    this.deathYaw = this.camera.rotation.y;
-    this.deathPitch = this.camera.rotation.x;
+    // Trigger the enemy's attack animation and face the player
+    enemy.playCaughtAnimation();
     // Reset crouch so death camera isn't low — also snap camera Y back up
     this.player.resetCrouch();
     this.camera.position.copy(this.player.getPosition());
+    // Capture current camera state as starting point (after crouch reset)
+    this.deathYaw = this.camera.rotation.y;
+    this.deathPitch = this.camera.rotation.x;
+    this.deathStartPos.copy(this.camera.position);
+
+    // Compute max stumble distance: check wall clearance behind the player
+    const ep = enemy.getPosition();
+    const pp = this.camera.position;
+    const ddx = ep.x - pp.x, ddz = ep.z - pp.z;
+    const dh = Math.sqrt(ddx * ddx + ddz * ddz);
+    const awayX = dh > 0.01 ? -ddx / dh : 0;
+    const awayZ = dh > 0.01 ? -ddz / dh : 0;
+    // Sample backward in small steps to find wall clearance
+    const DESIRED_STUMBLE = 0.6;
+    const STEP = 0.15;
+    let maxClear = 0;
+    for (let d = STEP; d <= DESIRED_STUMBLE; d += STEP) {
+      const testX = pp.x + awayX * d;
+      const testZ = pp.z + awayZ * d;
+      // Check if this point is in a valid cell (not through a wall)
+      const fi = this.player.floorIndex;
+      const floor = this.maze.floors[fi];
+      if (!floor) break;
+      const cx = Math.round(testX / CELL_SIZE);
+      const cz = Math.round(testZ / CELL_SIZE);
+      const startCx = Math.round(pp.x / CELL_SIZE);
+      const startCz = Math.round(pp.z / CELL_SIZE);
+      // If we crossed into a different cell, check walls
+      if (cx !== startCx || cz !== startCz) {
+        const startCell = floor.cells[startCz]?.[startCx];
+        const destCell = floor.cells[cz]?.[cx];
+        if (!startCell || !destCell) break;
+        // Check wall crossing
+        if (cx > startCx && (startCell.walls.E || destCell.walls.W)) break;
+        if (cx < startCx && (startCell.walls.W || destCell.walls.E)) break;
+        if (cz > startCz && (startCell.walls.S || destCell.walls.N)) break;
+        if (cz < startCz && (startCell.walls.N || destCell.walls.S)) break;
+      }
+      maxClear = d;
+    }
+    this.deathMaxStumble = Math.min(DESIRED_STUMBLE, maxClear);
     // Force flashlight on so the monster is visible
     this.flashlightOn = true;
     this.flashlight.intensity = 28.0;

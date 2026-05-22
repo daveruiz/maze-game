@@ -14,7 +14,7 @@ let _gltfCache: Promise<GltfCache> | null = null;
 function loadEnemyGltf(): Promise<GltfCache> {
   if (!_gltfCache) {
     const loader = new GLTFLoader();
-    _gltfCache = loader.loadAsync('/enemy.glb').then(g => ({
+    _gltfCache = loader.loadAsync('/enemynew.glb').then(g => ({
       scene: g.scene as THREE.Group,
       animations: g.animations,
     }));
@@ -132,6 +132,22 @@ export class Enemy {
   private currentAnimName = '';
   private modelReady      = false;
   private caughtPlayer    = false;
+  // Alert blending: the Alert clip plays simultaneously with the movement clip,
+  // its weight driven by suspicion (0 = pure movement, 1 = pure alert).
+  private alertAction:    THREE.AnimationAction | null = null;
+  private alertWeight     = 0;
+  // Head bone reference for camera targeting
+  private headBone:       THREE.Bone | null = null;
+
+  // Locomotion speed zones (tuned in anim-test) — hard boundaries, one animation at a time with crossfade
+  // Zone 0 (Alert/stopped) is handled separately via AlertFull clip
+  private static readonly LOCO_ZONES = [
+    { anim: 'Walking',              maxSpeed: 2.0,  refSpeed: 1.9,  minScale: 0.13 },
+    { anim: 'run_fast_10_inplace',  maxSpeed: 4.5,  refSpeed: 3.0,  minScale: 0.20 },
+    { anim: 'Running',              maxSpeed: 8.0,  refSpeed: 5.45, minScale: 0.30 },
+  ];
+  private static readonly CROSSFADE_DURATION = 0.3; // seconds for locomotion transitions
+  private static readonly ALERT_THRESHOLD = 0.1; // m/s — below this, play AlertFull
 
   constructor(scene: THREE.Scene, maze: MazeGenerator, audio: AudioManager) {
     this.scene = scene;
@@ -201,7 +217,9 @@ export class Enemy {
           const cloned = mats.map(m => {
             const mat = (m as THREE.MeshStandardMaterial).clone();
             mat.color.multiplyScalar(ENEMY_BRIGHTNESS);
-            mat.emissiveIntensity = 0;   // kill any self-glow from the original asset
+            mat.metalness = 0.0;          // kill chrome/metallic look from GLB
+            mat.roughness = 0.85;         // matte flesh/cloth surface
+            mat.emissiveIntensity = 0;    // kill any self-glow from the original asset
             mat.depthWrite = true;        // fix limbs rendering behind torso
             mat.depthTest  = true;
             // If the material is only "transparent" for alpha-test edges (opacity=1),
@@ -223,19 +241,59 @@ export class Enemy {
 
       // Build animation mixer + actions from the shared clips.
       this.mixer = new THREE.AnimationMixer(model);
+
+      // Leg bone names — Alert should NOT affect these (legs stay driven by locomotion)
+      const LEG_BONES = [
+        'LeftToeBase', 'LeftFoot', 'LeftLeg', 'LeftUpLeg',
+        'RightToeBase', 'RightFoot', 'RightLeg', 'RightUpLeg',
+      ];
+
       for (const clip of gltf.animations) {
+        if (clip.name === 'Alert') {
+          // Create TWO versions of Alert:
+          // 1. Upper-body-only → blend layer (suspicion while moving)
+          const upperTracks = clip.tracks.filter(t => {
+            const boneName = t.name.split('.')[0];
+            return !LEG_BONES.some(lb => boneName.includes(lb));
+          });
+          const upperClip = new THREE.AnimationClip('Alert', clip.duration, upperTracks);
+          const upperAction = this.mixer.clipAction(upperClip);
+          upperAction.clampWhenFinished = true;
+          this.actions.set('Alert', upperAction);
+
+          // 2. Full-body → played as locomotion when stopped
+          const fullClip = new THREE.AnimationClip('AlertFull', clip.duration, clip.tracks.slice());
+          const fullAction = this.mixer.clipAction(fullClip);
+          fullAction.clampWhenFinished = true;
+          this.actions.set('AlertFull', fullAction);
+          continue;
+        }
         const action = this.mixer.clipAction(clip);
         action.clampWhenFinished = true;
         this.actions.set(clip.name, action);
       }
 
+      // Set up Alert (upper-body) as a persistent blend layer (weight controlled by suspicion).
+      const alertAct = this.actions.get('Alert');
+      if (alertAct) {
+        alertAct.loop = THREE.LoopRepeat;
+        alertAct.enabled = true;
+        alertAct.setEffectiveWeight(0);
+        alertAct.play();
+        this.alertAction = alertAct;
+      }
+
+      // Find the Head bone for camera targeting during death
+      model.traverse(child => {
+        if ((child as THREE.Bone).isBone && child.name === 'Head') {
+          this.headBone = child as THREE.Bone;
+        }
+      });
+
       this.mesh.add(model);
       this.modelReady = true;
-
-      // Start the idle walk right away.
-      this.playAnimation('Running', 0); // 'Running' clip = injured walk = casual patrol
     } catch (err) {
-      console.error('[Enemy] Failed to load enemy.glb — using box placeholder', err);
+      console.error('[Enemy] Failed to load enemynew.glb — using box placeholder', err);
       // Fallback placeholder so the game doesn't crash.
       const geo = new THREE.BoxGeometry(0.6, ENEMY_MODEL_HEIGHT, 0.4);
       const mat = new THREE.MeshLambertMaterial({ color: 0x880000 });
@@ -249,25 +307,28 @@ export class Enemy {
   // ── Animation helpers ───────────────────────────────────────────────────
 
   /**
-   * Cross-fade to a named animation clip.
+   * Cross-fade to a named movement animation clip.
+   * Alert is excluded — it runs as a separate blend layer managed by updateAlertBlend().
    * @param name          Clip name (must match one in the GLB).
    * @param fadeDuration  Crossfade length in seconds (0 = instant).
    * @param loop          true = LoopRepeat (default), false = LoopOnce.
    */
   private playAnimation(name: string, fadeDuration = 0.25, loop = true) {
     if (!this.modelReady || name === this.currentAnimName) return;
+    if (name === 'Alert') return; // Alert is managed separately — never cross-fade to it
     const next = this.actions.get(name);
     if (!next) return;
 
     next.loop = loop ? THREE.LoopRepeat : THREE.LoopOnce;
     if (!loop) next.reset();
     next.enabled = true;
+    next.setEffectiveWeight(1);
     next.play();
 
     const prev = this.actions.get(this.currentAnimName);
-    if (prev && fadeDuration > 0) {
+    if (prev && prev !== this.alertAction && fadeDuration > 0) {
       prev.crossFadeTo(next, fadeDuration, true);
-    } else if (prev) {
+    } else if (prev && prev !== this.alertAction) {
       prev.stop();
     }
 
@@ -275,42 +336,68 @@ export class Enemy {
   }
 
   /**
+   * Smoothly blend the Alert animation layer based on suspicion.
+   * Alert weight ramps 0→1 as suspicion goes 0→1. During chase, Alert is off.
+   */
+  private updateAlertBlend(dt: number, actualSpeed = 0) {
+    if (!this.alertAction) return;
+
+    // Target weight: suspicion drives alert posture, but NOT during chase or caught.
+    // When standing still (speed ≈ 0), force full alert so the idle pose takes over.
+    let targetWeight = 0;
+    if (!this.caughtPlayer && this.state !== EnemyState.CHASING) {
+      targetWeight = actualSpeed <= Enemy.ALERT_THRESHOLD ? 1.0 : this.suspicion;
+    }
+
+    // Smooth toward target
+    this.alertWeight += (targetWeight - this.alertWeight) * Math.min(1, 5 * dt);
+    this.alertAction.setEffectiveWeight(this.alertWeight);
+  }
+
+  /**
+   * Pick the locomotion zone for a given speed (hard boundaries).
+   * Returns the matching zone from LOCO_ZONES.
+   */
+  private locoZoneFor(speed: number) {
+    for (const z of Enemy.LOCO_ZONES) {
+      if (speed <= z.maxSpeed) return z;
+    }
+    return Enemy.LOCO_ZONES[Enemy.LOCO_ZONES.length - 1];
+  }
+
+  /**
    * Decide which animation should play each frame, then tick the mixer.
    * @param actualSpeed  Real XZ movement speed this frame (world units / second).
-   *                     Drives timeScale so feet always match ground travel.
+   *
+   * Animation map (enemynew.glb):
+   *   Walking / run_fast_10_inplace / Running → blended locomotion tree
+   *   Triple_Combo_Attack                     → caught player celebration
+   *   Alert                                   → layered on top by suspicion
    */
   private updateAnimationState(dt: number, actualSpeed = 0) {
     if (!this.modelReady || !this.mixer) return;
 
     if (this.caughtPlayer) {
-      this.playAnimation('Injured_Walk', 0.15, false); // dance
+      this.playAnimation('Triple_Combo_Attack', 0.15, false);
       this.mixer.timeScale = 1.0;
+      this.updateAlertBlend(dt, 0);
       this.mixer.update(dt);
       return;
     }
 
-    // Reference speeds: the world-unit/s at which each clip looks natural at 1× playback.
-    // Tune these if feet slide or cycle too fast.
-    const INJURED_WALK_REF = 1.4;  // 'Running' clip  (slow injured creep)
-    const NORMAL_WALK_REF  = 3.0;  // 'Alert'   clip  (brisk walk)
-    const RUN_REF          = BASE_CHASE_SPEED; // 'Skip_Forward' clip (full sprint)
-
-    if (this.state === EnemyState.CHASING) {
-      this.playAnimation('Skip_Forward', 0.25);
-      this.mixer.timeScale = Math.max(0.3, actualSpeed / RUN_REF);
+    // Hard zone: pick ONE target animation based on speed, cross-fade to it
+    if (actualSpeed <= Enemy.ALERT_THRESHOLD) {
+      // Stopped: play full-body Alert as the locomotion clip
+      this.playAnimation('AlertFull', Enemy.CROSSFADE_DURATION);
+      this.mixer.timeScale = 1.0;
     } else {
-      if (this.investigateWaiting) {
-        this.playAnimation('Boom_Dance', 0.3);
-        this.mixer.timeScale = 1.0;                               // idle — play at natural speed
-      } else if (this.suspicion >= 0.55 || this.investigateTimer > 0) {
-        this.playAnimation('Alert', 0.3);
-        this.mixer.timeScale = Math.max(0.2, actualSpeed / NORMAL_WALK_REF);
-      } else {
-        this.playAnimation('Running', 0.4);
-        this.mixer.timeScale = Math.max(0.15, actualSpeed / INJURED_WALK_REF);
-      }
+      const zone = this.locoZoneFor(actualSpeed);
+      this.playAnimation(zone.anim, Enemy.CROSSFADE_DURATION);
+      this.mixer.timeScale = Math.max(zone.minScale, actualSpeed / zone.refSpeed);
     }
 
+    // Blend alert posture on top of current movement
+    this.updateAlertBlend(dt, actualSpeed);
     this.mixer.update(dt);
   }
 
@@ -399,8 +486,17 @@ export class Enemy {
     // Return to patrol animation on respawn.
     if (this.modelReady) {
       this.currentAnimName = '';
+      this.alertWeight = 0;
       this.actions.forEach(a => a.stop());
-      this.playAnimation('Running', 0); // injured walk = casual patrol
+      // Restart the Alert blend layer
+      if (this.alertAction) {
+        this.alertAction.reset();
+        this.alertAction.enabled = true;
+        this.alertAction.setEffectiveWeight(0);
+        this.alertAction.play();
+      }
+      // Start with full-body Alert (enemy spawns stopped)
+      this.playAnimation('AlertFull', 0);
     }
   }
 
@@ -1085,15 +1181,18 @@ export class Enemy {
 
   private doChase(dt: number, playerPos: THREE.Vector3, speedMult: number) {
     const distToPlayer = this.pos.distanceTo(playerPos);
+    const step = BASE_CHASE_SPEED * speedMult * dt;
 
-    // Close range: always move toward the ACTUAL player position, never a stale
-    // lastKnownPlayerPos — that was causing the "freeze next to player" bug.
-    if (distToPlayer < CELL_SIZE * 0.75) {
-      this.moveToward(playerPos, BASE_CHASE_SPEED * speedMult * dt);
+    // Direct line of sight → charge straight at the player (no L-shaped BFS paths)
+    if (this.hasLineOfSight(playerPos)) {
+      this.moveToward(playerPos, step);
+      // Clear stale path so BFS kicks in immediately once LOS breaks
+      this.path = [];
+      this.pathTimer = 0;
       return;
     }
 
-    // Far range: pathfind toward last known position (updated above in chasing block).
+    // No LOS: pathfind toward last known position
     const target = this.lastKnownPlayerPos ?? playerPos;
     if (this.pathTimer >= PATH_UPDATE_INTERVAL * 0.5 || this.path.length === 0) {
       this.pathTimer = 0;
@@ -1102,7 +1201,7 @@ export class Enemy {
 
     if (this.path.length > 0) {
       const next = this.path[0];
-      const d = this.moveToward(next, BASE_CHASE_SPEED * speedMult * dt);
+      const d = this.moveToward(next, step);
       if (d < 0.4) this.path.shift();
     }
   }
@@ -1441,6 +1540,44 @@ export class Enemy {
 
   getPosition(): THREE.Vector3 { return this.pos; }
   getSearchTarget(): THREE.Vector3 | null { return this.searchTarget; }
+
+  /** Get the world-space position of the Head bone (falls back to estimated position). */
+  getHeadPosition(): THREE.Vector3 {
+    if (this.headBone) {
+      const wp = new THREE.Vector3();
+      this.headBone.getWorldPosition(wp);
+      return wp;
+    }
+    // Fallback: estimate head at ~85% of model height above feet
+    return new THREE.Vector3(this.pos.x, this.mesh.position.y + ENEMY_MODEL_HEIGHT * 0.85, this.pos.z);
+  }
+
+  /** Tick the animation mixer and face a target (used during death sequence when full update() is skipped). */
+  tickMixer(dt: number, faceTarget?: THREE.Vector3) {
+    if (faceTarget) {
+      const dx = faceTarget.x - this.pos.x;
+      const dz = faceTarget.z - this.pos.z;
+      if (dx * dx + dz * dz > 0.01) {
+        const targetYaw = Math.atan2(dx, dz);
+        let diff = targetYaw - this.mesh.rotation.y;
+        while (diff >  Math.PI) diff -= 2 * Math.PI;
+        while (diff < -Math.PI) diff += 2 * Math.PI;
+        this.mesh.rotation.y += diff * Math.min(1, 10 * dt);
+      }
+    }
+    if (this.mixer) this.mixer.update(dt);
+  }
+
+  /** Force the caught-player animation and posture (called once from Game on catch). */
+  playCaughtAnimation() {
+    this.caughtPlayer = true;
+    if (!this.modelReady || !this.mixer) return;
+    this.playAnimation('Triple_Combo_Attack', 0.15, false);
+    this.mixer.timeScale = 1.0;
+    // Kill alert blend so the attack plays clean
+    if (this.alertAction) this.alertAction.setEffectiveWeight(0);
+    this.alertWeight = 0;
+  }
 
   dispose() {
     if (this.mixer) {
