@@ -574,8 +574,7 @@ export class Game {
         enemy.setKeyCollected(hasKey === true);
       }
       const caught = enemy.update(dt, pp, this.player.floorIndex, this.camera, this.playerVisibility, this.audio.playerAudibility);
-      enemy.updateLighting(this.floorLights[enemy.homeFloor] ?? []);
-      if (caught && !caughtBy) {
+if (caught && !caughtBy) {
         caughtBy = enemy;
       }
       // Track nearest enemy on this floor
