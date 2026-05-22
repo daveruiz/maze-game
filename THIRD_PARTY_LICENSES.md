@@ -13,6 +13,12 @@ This file tracks attribution for third-party assets used in **Dad's Nightmare**.
 | ambient-village.mp3 | Freesound Community | [Pixabay #6074](https://pixabay.com/sound-effects/creepy-vocal-ambience-6074/) | [Pixabay License](https://pixabay.com/service/license-summary/) |
 | death-growl.mp3 | EstudioCoati | [Pixabay #502939](https://pixabay.com/sound-effects/monster-growl-19-502939/) | [Pixabay License](https://pixabay.com/service/license-summary/) |
 | enemy-chains.mp3 | Alex_Jauk | [Pixabay #256451](https://pixabay.com/sound-effects/scary-chain-noises-256451/) | [Pixabay License](https://pixabay.com/service/license-summary/) |
+| alert.mp3 | — | [Pixabay](https://pixabay.com/) | [Pixabay License](https://pixabay.com/service/license-summary/) |
+| idle-01.mp3 – idle-06.mp3 | — | [Pixabay](https://pixabay.com/) | [Pixabay License](https://pixabay.com/service/license-summary/) |
+| chasing-01.mp3 – chasing-06.mp3 | — | [Pixabay](https://pixabay.com/) | [Pixabay License](https://pixabay.com/service/license-summary/) |
+| notice.mp3 | — | [Pixabay](https://pixabay.com/) | [Pixabay License](https://pixabay.com/service/license-summary/) |
+
+> Exact Pixabay URLs for alert, idle, chasing, and notice clips are TBD. All are under the [Pixabay License](https://pixabay.com/service/license-summary/).
 
 > Files not listed here are original work.
 
@@ -24,8 +30,8 @@ This file tracks attribution for third-party assets used in **Dad's Nightmare**.
 
 ## Images / Textures
 
-| File | Author | Source | License |
-|------|--------|--------|---------|
-| <!-- Add rows as needed --> | | | |
+All textures are original work by David Ruiz.
 
-> Files not listed here are original work.
+## 3D Models
+
+All 3D models (enemynew.glb) are original work by David Ruiz.

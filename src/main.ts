@@ -14,7 +14,6 @@ let game: Game | null = null;
 // ── Preload all assets immediately (no user gesture needed for fetch/XHR) ──
 const PRELOAD_TEXTURES = [
   'item-key.png', 'item-map.png', 'item-compass.png',
-  'enemy-front.png', 'enemy-back.png', 'enemy-side.png',
   'basement-wall.png', 'basement-floor.png', 'basement-ceiling.png',
   'home-wall.png', 'home-floor.png', 'home-ceiling.png',
   'village-wall.png', 'vilage-floor.png',
