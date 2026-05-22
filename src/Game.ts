@@ -197,7 +197,11 @@ export class Game {
       this.gamepad.onKeyboardInput();
     });
     document.addEventListener('mousedown', e => {
-      if (e.button === 0) this.toggleFlashlight(); // left click toggles flashlight
+      if (e.button === 0) {
+        const debugMenu = document.getElementById('debug-menu');
+        if (debugMenu && debugMenu.contains(e.target as Node)) return; // ignore clicks on debug menu
+        this.toggleFlashlight();
+      }
     });
 
     this.setupDebugMenu();
@@ -482,8 +486,8 @@ export class Game {
           this.deathYaw += yawDiff * lerpSpeed;
           this.deathPitch += (targetPitch - this.deathPitch) * lerpSpeed;
 
-          // Hit flinch at ~1s: enemy strikes the player, camera jerks away
-          if (this.deathTimer >= 1.0) {
+          // Hit flinch at ~1.2s: enemy strikes the player, camera jerks away
+          if (this.deathTimer >= 1.2) {
             this.deathHitApplied = true;
             this.deathYaw += 0.6;
             this.deathPitch -= 0.35;

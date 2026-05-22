@@ -34,7 +34,7 @@ const BASE_CHASE_SPEED  = 3.75;
 const SPEED_SCALE_PER_FLOOR = 0.10; // +10% per floor
 const SIGHT_RANGE       = 14;   // world units (flashlight on)
 const LOSE_RANGE        = 20;   // enemy loses sight beyond this (flashlight on)
-const LOSE_RANGE_DARK   = 15;   // loses sight sooner in the dark
+const LOSE_RANGE_DARK   = 10;   // loses sight sooner in the dark
 const CATCH_DISTANCE    = 1.2;
 const PATH_UPDATE_INTERVAL = 0.5; // seconds
 
@@ -61,7 +61,7 @@ const INSTANT_CHASE_RANGE = 6.0; // ~1.5 cells
 const SUSPICION_DECAY        = 0.04;  // per second — idle cooldown rate
 const SUSPICION_BUILD_DIRECT = 2.00;  // per second when enemy directly sees player (scales with visibility)
 const SUSPICION_BUILD_GLOW   = 0.60;  // per second from peripheral awareness beyond direct sight (scales with visibility)
-const SUSPICION_BUILD_NOISE  = 1.00;  // per second at playerNoise=1.0, squared falloff (independent of visibility)
+const SUSPICION_BUILD_NOISE  = 1.50;  // per second at playerNoise=1.0, squared falloff (independent of visibility)
 const SUSPICION_ON_LOST      = 0.75;  // suspicion reset value when enemy loses player from chase
 const SUSPICION_ON_ALERT     = 0.50;  // suspicion boost when alerted by a sibling
 
@@ -1021,12 +1021,14 @@ export class Enemy {
     const cells = this.reachableCells.filter(c => !c.hasObstacle);
     if (cells.length === 0) return this.playerHint.clone();
 
-    // Target cells near the player: 1–8 BFS steps away
-    // This makes enemies actively close in, not orbit at a distance
+    // Target cells 3–8 BFS steps from the player
+    const HUNT_MIN = 3;
     const HUNT_MAX = 8;
+    const MAX_ATTEMPTS = 5;
 
-    let bestScore = -Infinity;
-    let bestCell = cells[0];
+    // Build a pool of good candidates in the 3–8 range, then pick randomly
+    type Candidate = { cell: typeof cells[0]; score: number };
+    const candidates: Candidate[] = [];
     const sampleSize = Math.min(cells.length, 200);
     const step = Math.max(1, Math.floor(cells.length / sampleSize));
 
@@ -1036,12 +1038,14 @@ export class Enemy {
       const bfsToPlayer = playerDistMap.get(key) ?? 999;
       if (bfsToPlayer >= 999) continue;
 
-      // Strongly prefer cells close to the player
+      // Prefer cells in the 3–8 range
       let score = 0;
-      if (bfsToPlayer <= HUNT_MAX) {
-        score += 80 - bfsToPlayer * 15; // closer = much higher score
+      if (bfsToPlayer >= HUNT_MIN && bfsToPlayer <= HUNT_MAX) {
+        score += 50 - bfsToPlayer * 4; // closer within range = higher score
+      } else if (bfsToPlayer < HUNT_MIN) {
+        score -= (HUNT_MIN - bfsToPlayer) * 20; // too close penalized hard
       } else {
-        score += Math.max(0, 30 - (bfsToPlayer - HUNT_MAX) * 4); // far cells penalized heavily
+        score -= (bfsToPlayer - HUNT_MAX) * 6; // too far penalized
       }
 
       // Spread enemies: approach from different angles using patrol zone
@@ -1051,7 +1055,7 @@ export class Enemy {
       if (dcx !== 0 || dcz !== 0) {
         const cellAngle = Math.atan2(dcz, dcx);
         const angleDiff = Math.abs(((cellAngle - zoneAngle + Math.PI * 3) % (Math.PI * 2)) - Math.PI);
-        score -= angleDiff * 5; // prefer cells in our assigned angular sector
+        score -= angleDiff * 5;
       }
 
       // Light separation from siblings
@@ -1062,17 +1066,25 @@ export class Enemy {
         if (sdist < 4) score -= (4 - sdist) * 3;
       }
 
-      score += Math.random() * 4;
-
-      if (score > bestScore) {
-        bestScore = score;
-        bestCell = c;
-      }
+      if (score > -20) candidates.push({ cell: c, score });
     }
 
-    const wp = this.maze.cellToWorld(bestCell.x, bestCell.z, this.floorIndex);
-    wp.y = this.pos.y;
-    return wp;
+    // Sort by score descending, take top N, then pick randomly from those
+    candidates.sort((a, b) => b.score - a.score);
+    const poolSize = Math.min(candidates.length, 8);
+
+    for (let attempt = 0; attempt < MAX_ATTEMPTS; attempt++) {
+      if (poolSize === 0) break;
+      const pick = candidates[Math.floor(Math.random() * poolSize)];
+      const wp = this.maze.cellToWorld(pick.cell.x, pick.cell.z, this.floorIndex);
+      wp.y = this.pos.y;
+      const testPath = this.bfsPath(this.pos, wp);
+      if (testPath.length > 0) return wp;
+      // Unreachable — try another random pick from the pool
+    }
+
+    // All attempts failed — fall back to player position directly
+    return this.playerHint.clone();
   }
 
   /** Pick a patrol target for idle roaming — uses BFS distance map so enemies
