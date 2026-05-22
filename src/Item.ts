@@ -53,7 +53,7 @@ export class Item {
 
     this.mesh = new THREE.Mesh(geo, mat);
     this.mesh.position.set(worldPos.x, this.baseY, worldPos.z);
-    this.mesh.renderOrder = 2;
+    this.mesh.renderOrder = 1;
     scene.add(this.mesh);
 
     // Small glow under the item

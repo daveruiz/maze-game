@@ -100,7 +100,7 @@ export class Enemy {
   private texFront!: THREE.Texture;
   private texBack!:  THREE.Texture;
   private texSide!:  THREE.Texture;
-  private mat!: THREE.MeshLambertMaterial;
+  private mat!: THREE.MeshBasicMaterial;
   private moveDir: THREE.Vector3 = new THREE.Vector3(0, 0, -1);
 
   constructor(scene: THREE.Scene, maze: MazeGenerator, audio: AudioManager) {
@@ -146,11 +146,9 @@ export class Enemy {
     });
 
     const geo = new THREE.PlaneGeometry(2.4, 2.55);
-    this.mat = new THREE.MeshLambertMaterial({
+    this.mat = new THREE.MeshBasicMaterial({
       map: this.texFront,
-      color: 0x666666,
-      emissive: 0xffffff,
-      emissiveIntensity: 0.03,
+      color: 0x222222,
       transparent: true,
       alphaTest: 0.05,
       depthWrite: false,
@@ -159,6 +157,22 @@ export class Enemy {
     this.mesh = new THREE.Mesh(geo, this.mat);
     this.mesh.renderOrder = 1;
     this.scene.add(this.mesh);
+  }
+
+  /** Compute scene-light brightness at the enemy's position and apply to material color. */
+  updateLighting(lights: THREE.Light[]) {
+    let brightness = 0.12;
+    for (const light of lights) {
+      if (!(light instanceof THREE.PointLight)) continue;
+      const dx = this.pos.x - light.position.x;
+      const dz = this.pos.z - light.position.z;
+      const dist = Math.sqrt(dx * dx + dz * dz);
+      if (dist < light.distance) {
+        const t = 1 - dist / light.distance;
+        brightness += t * t * light.intensity * 0.15;
+      }
+    }
+    this.mat.color.setScalar(Math.min(1.0, brightness));
   }
 
   /**
@@ -941,8 +955,9 @@ export class Enemy {
     const target = this.lastKnownPlayerPos ?? playerPos;
     const distToTarget = this.pos.distanceTo(target);
 
-    // Close range: move directly toward the player (BFS can't resolve sub-cell distances)
-    if (distToTarget < CELL_SIZE * 1.2) {
+    // Close range: move directly (BFS can't resolve sub-cell distances).
+    // Keep threshold small so a wall can't sit between enemy and player.
+    if (distToTarget < CELL_SIZE * 0.5) {
       this.moveToward(target, BASE_CHASE_SPEED * speedMult * dt);
       return;
     }
@@ -970,7 +985,9 @@ export class Enemy {
       this.moveDir.normalize();
       diff.normalize().multiplyScalar(Math.min(maxDist, dist));
       this.pos.add(diff);
-      // Push out of walls after every move step
+      // Multiple passes for wall convergence
+      this.enforceWalls();
+      this.enforceWalls();
       this.enforceWalls();
     }
     return dist;

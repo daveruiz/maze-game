@@ -419,14 +419,38 @@
       <div id="overlay">
         <canvas id="claw-canvas"></canvas>
         <h1>DAD'S NIGHTMARE</h1>
-        <div class="controls-list">
+        <div id="kb-controls" class="controls-list">
           WASD — Move &nbsp;|&nbsp; SHIFT — Run &nbsp;|&nbsp; C/CTRL — Crouch &nbsp;|&nbsp; SPACE — Jump &nbsp;|&nbsp; F — Flashlight
+        </div>
+        <div id="gp-controls" class="controls-list" style="display:none">
+          LEFT STICK — Move &nbsp;|&nbsp; RIGHT STICK — Look &nbsp;|&nbsp; A — Jump &nbsp;|&nbsp; B — Crouch &nbsp;|&nbsp; X — Flashlight &nbsp;|&nbsp; L3 — Sprint
         </div>
         <button id="start-btn">ENTER</button>
       </div>
 
     </div><!-- /ui-root -->
   </div>
+  <script>
+    (function () {
+      const kb = document.getElementById('kb-controls');
+      const gp = document.getElementById('gp-controls');
+      function showGamepad(on) {
+        if (kb) kb.style.display = on ? 'none' : '';
+        if (gp) gp.style.display = on ? '' : 'none';
+      }
+      window.addEventListener('gamepadconnected', () => showGamepad(true));
+      window.addEventListener('gamepaddisconnected', () => {
+        // Only hide gamepad controls if no gamepads remain connected
+        const pads = navigator.getGamepads ? Array.from(navigator.getGamepads()).filter(Boolean) : [];
+        showGamepad(pads.length > 0);
+      });
+      // Check for already-connected gamepads on load
+      if (navigator.getGamepads) {
+        const pads = Array.from(navigator.getGamepads()).filter(Boolean);
+        if (pads.length > 0) showGamepad(true);
+      }
+    })();
+  </script>
   <script>
     // Scale the UI root to fill the viewport.
     // The design space fits the tighter dimension (Math.min), then the root expands

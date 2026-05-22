@@ -746,8 +746,8 @@ export class AudioManager {
     }
 
     const speedT = Math.min(1, speed / maxSpeed);
-    // Step interval: slow walk ~0.5s → sprint ~0.3s
-    const interval = 0.5 - speedT * 0.2;
+    // Step interval: slow walk ~0.625s → sprint ~0.375s (25% slower)
+    const interval = 0.625 - speedT * 0.25;
 
     this.footstepTimer += dt;
     if (this.footstepTimer >= interval) {
@@ -774,7 +774,7 @@ export class AudioManager {
 
     // Volume scales with speed — louder when sprinting
     const gain = this.ctx.createGain();
-    const gainValue = (0.02 + speedT * 0.14) * volumeMult; // 0.02 walk → 0.16 sprint
+    const gainValue = (0.015 + speedT * 0.12) * volumeMult; // quieter walk → 0.135 sprint
     gain.gain.value = gainValue;
     this.reportPlayerSound(gainValue);
 

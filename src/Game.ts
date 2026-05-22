@@ -562,7 +562,7 @@ export class Game {
 
     // Audio listener + footsteps
     this.audio.setListenerPose(pp.x, pp.y, pp.z, fwd.x, fwd.y, fwd.z);
-    this.audio.updateFootsteps(dt, this.player.currentSpeed, 7.5, this.player.onGround, this.player.justLanded, this.player.landingImpact, this.player.crouching);
+    this.audio.updateFootsteps(dt, this.player.currentSpeed, 5.625, this.player.onGround, this.player.justLanded, this.player.landingImpact, this.player.crouching);
 
     // Enemies + proximity drone
     let nearestDist = Infinity;
@@ -574,6 +574,7 @@ export class Game {
         enemy.setKeyCollected(hasKey === true);
       }
       const caught = enemy.update(dt, pp, this.player.floorIndex, this.camera, this.playerVisibility, this.audio.playerAudibility);
+      enemy.updateLighting(this.floorLights[enemy.homeFloor] ?? []);
       if (caught && !caughtBy) {
         caughtBy = enemy;
       }

@@ -1,7 +1,7 @@
 import * as THREE from 'three';
 import { MazeGenerator, CELL_SIZE, WALL_HEIGHT, OBSTACLE_HEIGHT } from './Maze';
 
-const BASE_SPEED    = 3.75;   // halved from 7.5
+const BASE_SPEED    = 2.8125; // 25% slower than original 3.75
 const SPRINT_MULT   = 2.0;    // shift doubles speed (back to original 7.5)
 const EXHAUSTED_MULT = 0.5;   // half speed when stamina depleted
 const CROUCH_MULT   = 0.4;   // slow when crouching
@@ -298,7 +298,7 @@ export class Player {
     this.bobIntensity += (targetIntensity - this.bobIntensity) * Math.min(1, bobSmooth * dt);
 
     // Frequency synced with footstep interval (0.5s walk → 0.3s sprint)
-    const bobFreq = 1 / (0.5 - speedT * 0.2);
+    const bobFreq = 1 / (0.625 - speedT * 0.25);
     this.bobPhase += bobFreq * dt * Math.PI * 2;
 
     // Vertical bob: subtle — max ~3cm at full sprint
