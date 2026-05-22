@@ -61,7 +61,7 @@ const INSTANT_CHASE_RANGE = 6.0; // ~1.5 cells
 const SUSPICION_DECAY        = 0.04;  // per second — idle cooldown rate
 const SUSPICION_BUILD_DIRECT = 2.00;  // per second when enemy directly sees player (scales with visibility)
 const SUSPICION_BUILD_GLOW   = 0.60;  // per second from peripheral awareness beyond direct sight (scales with visibility)
-const SUSPICION_BUILD_NOISE  = 0.50;  // per second at playerNoise=1.0, squared falloff (independent of visibility)
+const SUSPICION_BUILD_NOISE  = 1.00;  // per second at playerNoise=1.0, squared falloff (independent of visibility)
 const SUSPICION_ON_LOST      = 0.75;  // suspicion reset value when enemy loses player from chase
 const SUSPICION_ON_ALERT     = 0.50;  // suspicion boost when alerted by a sibling
 
@@ -966,9 +966,10 @@ export class Enemy {
     }
   }
 
-  /** Hunt mode: enemies are attracted toward the player's general area (not exact position).
-   *  Picks a cell near the player using BFS smell, walks there, then re-evaluates.
-   *  Slower re-targeting than chase — creates tension without being a second chase mode. */
+  /** Hunt mode: enemies actively move toward the player's area once the key is collected.
+   *  Picks a cell close to the player, walks there, then re-evaluates.
+   *  Speed is doubled (HUNT_SPEED_MULT) to create urgency. */
+  private static readonly HUNT_SPEED_MULT = 2.0; // base speed multiplier when key collected
   private huntTrackTimer = 0;
   private huntFailCount = 0;
   private doHuntTrack(dt: number, speedMult: number) {
@@ -980,12 +981,11 @@ export class Enemy {
       (this.searchTarget && this.pos.distanceTo(this.searchTarget) < 1.5);
 
     if (needsRepath) {
-      // Pick a cell in the player's AREA, not the exact cell
       const target = this.pickHuntTarget();
       this.searchTarget = target;
-      // Path WITHOUT ignoring obstacles — enemy can't walk through them
       this.path = this.smoothPath(this.bfsPath(this.pos, target));
-      this.huntTrackTimer = 5 + Math.random() * 4; // 5–9s between re-targets
+      // Re-target frequently — keep converging on the player
+      this.huntTrackTimer = 3 + Math.random() * 3; // 3–6s between re-targets
 
       if (this.path.length === 0) {
         this.huntFailCount++;
@@ -995,49 +995,35 @@ export class Enemy {
           if (this.path.length === 0) {
             this.searchTarget = this.pickPatrolTarget();
             this.path = this.smoothPath(this.bfsPath(this.pos, this.searchTarget));
-            this.huntTrackTimer = 6 + Math.random() * 3;
+            this.huntTrackTimer = 4 + Math.random() * 2;
           }
           this.huntFailCount = 0;
         }
       } else {
         this.huntFailCount = 0;
       }
-
-      const myCell = this.maze.worldToCell(this.pos.x, this.pos.z, this.floorIndex);
-      const tgtCell = this.maze.worldToCell(this.searchTarget.x, this.searchTarget.z, this.floorIndex);
-      console.debug(
-        `[Enemy z${this.patrolZone} f${this.floorIndex}] HUNT → ` +
-        `(${myCell.x},${myCell.z})→(${tgtCell.x},${tgtCell.z}) | ` +
-        `dist: ${this.pos.distanceTo(this.searchTarget).toFixed(1)} | pathSteps: ${this.path.length}`
-      );
     }
 
     if (this.path.length > 0) {
       const next = this.path[0];
-      const speed = BASE_SEARCH_SPEED + (BASE_CHASE_SPEED - BASE_SEARCH_SPEED) * this.suspicion;
+      const huntSpeed = BASE_SEARCH_SPEED * Enemy.HUNT_SPEED_MULT;
+      const speed = huntSpeed + (BASE_CHASE_SPEED - huntSpeed) * this.suspicion;
       const d = this.moveToward(next, speed * speedMult * dt);
       if (d < 0.4) this.path.shift();
     }
   }
 
-  /** Pick a hunt target: a reachable cell within the player's area.
-   *  Sweet-spot range scales with map size so it works on all floors.
-   *  Only considers cells the enemy can actually walk to (no obstacles). */
+  /** Pick a hunt target: a reachable cell NEAR the player.
+   *  Enemies converge toward the player from different directions (spread by patrol zone). */
   private pickHuntTarget(): THREE.Vector3 {
     const playerCell = this.maze.worldToCell(this.playerHint.x, this.playerHint.z, this.floorIndex);
-    // Distance map from player ignores obstacles (player can be on one)
     const playerDistMap = this.bfsDistanceMap(playerCell.x, playerCell.z, true);
     const cells = this.reachableCells.filter(c => !c.hasObstacle);
     if (cells.length === 0) return this.playerHint.clone();
 
-    // Scale hunt range with map size — maze BFS distances grow super-linearly
-    // because paths wind around walls. Use scale² for max to cover enough area.
-    const floor = this.maze.floors[this.floorIndex];
-    const mapDim = Math.min(floor.width, floor.height);
-    const scale = mapDim / 21;
-    const HUNT_MIN = Math.max(3, Math.round(3 * scale));
-    const HUNT_MAX = Math.max(8, Math.round(8 * scale * scale));
-    const HUNT_PEAK = Math.round((HUNT_MIN + HUNT_MAX) / 2);
+    // Target cells near the player: 1–8 BFS steps away
+    // This makes enemies actively close in, not orbit at a distance
+    const HUNT_MAX = 8;
 
     let bestScore = -Infinity;
     let bestCell = cells[0];
@@ -1048,41 +1034,35 @@ export class Enemy {
       const c = cells[i];
       const key = `${c.x},${c.z}`;
       const bfsToPlayer = playerDistMap.get(key) ?? 999;
-
-      // Skip cells the distance map couldn't reach (unreachable from player)
       if (bfsToPlayer >= 999) continue;
 
-      // Sweet spot: HUNT_MIN–HUNT_MAX BFS steps from player
+      // Strongly prefer cells close to the player
       let score = 0;
-      if (bfsToPlayer >= HUNT_MIN && bfsToPlayer <= HUNT_MAX) {
-        score += 50 - Math.abs(bfsToPlayer - HUNT_PEAK) * (30 / (HUNT_MAX - HUNT_MIN));
-      } else if (bfsToPlayer < HUNT_MIN) {
-        score += 20 - (HUNT_MIN - bfsToPlayer) * 8;
+      if (bfsToPlayer <= HUNT_MAX) {
+        score += 80 - bfsToPlayer * 15; // closer = much higher score
       } else {
-        score += Math.max(0, 40 - (bfsToPlayer - HUNT_MAX) * 3);
+        score += Math.max(0, 30 - (bfsToPlayer - HUNT_MAX) * 4); // far cells penalized heavily
       }
 
-      // Separation from sibling positions AND their active targets
+      // Spread enemies: approach from different angles using patrol zone
+      const zoneAngle = (this.patrolZone / Math.max(1, this.siblings.length)) * Math.PI * 2;
+      const dcx = c.x - playerCell.x;
+      const dcz = c.z - playerCell.z;
+      if (dcx !== 0 || dcz !== 0) {
+        const cellAngle = Math.atan2(dcz, dcx);
+        const angleDiff = Math.abs(((cellAngle - zoneAngle + Math.PI * 3) % (Math.PI * 2)) - Math.PI);
+        score -= angleDiff * 5; // prefer cells in our assigned angular sector
+      }
+
+      // Light separation from siblings
       for (const sib of this.siblings) {
         if (sib === this || sib.homeFloor !== this.homeFloor) continue;
-        // Penalize near sibling position
         const sibCell = this.maze.worldToCell(sib.pos.x, sib.pos.z, this.floorIndex);
         const sdist = Math.sqrt((c.x - sibCell.x) ** 2 + (c.z - sibCell.z) ** 2);
-        if (sdist < SEPARATION_RADIUS / CELL_SIZE) {
-          score -= (SEPARATION_RADIUS / CELL_SIZE - sdist) * 2;
-        }
-        // Penalize near sibling's target — avoid converging on the same area
-        const sibTarget = sib.getSearchTarget();
-        if (sibTarget) {
-          const stc = this.maze.worldToCell(sibTarget.x, sibTarget.z, this.floorIndex);
-          const tdist = Math.sqrt((c.x - stc.x) ** 2 + (c.z - stc.z) ** 2);
-          if (tdist < SEPARATION_RADIUS / CELL_SIZE) {
-            score -= (SEPARATION_RADIUS / CELL_SIZE - tdist) * 3;
-          }
-        }
+        if (sdist < 4) score -= (4 - sdist) * 3;
       }
 
-      score += Math.random() * 6;
+      score += Math.random() * 4;
 
       if (score > bestScore) {
         bestScore = score;
