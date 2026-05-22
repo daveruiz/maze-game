@@ -365,19 +365,6 @@ export class MazeGenerator {
       }
     }
 
-    // Solidify outer border ring to block edge-running and force interior navigation
-    const BORDER = 4;
-    for (let z = 1; z < H - 1; z++) {
-      for (let x = 1; x < W - 1; x++) {
-        const onBorder = x < BORDER || x >= W - BORDER || z < BORDER || z >= H - BORDER;
-        if (!onBorder) continue;
-        if (x < 6 && z < 6) continue; // keep entry corner open
-        const c = cells[z]?.[x];
-        if (!c || c.stairs || c.isExit) continue;
-        this.solidifyCell(cells, x, z, W, H);
-      }
-    }
-
     // Guarantee a central plaza (clear the central block)
     const px = Math.floor(W / 2) - 3;
     const pz = Math.floor(H / 2) - 3;
