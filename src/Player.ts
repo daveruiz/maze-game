@@ -57,6 +57,10 @@ export class Player {
   crouching = false;
   private crouchToggled = false; // for toggle mode
 
+  // Mouse accumulator — collect deltas between frames so nothing is lost at low FPS
+  private mouseDX = 0;
+  private mouseDY = 0;
+
   // Head bob
   private bobPhase = 0;         // oscillation phase (radians)
   private bobIntensity = 0;     // smoothed intensity (0 = still, 1 = full bob)
@@ -131,16 +135,9 @@ export class Player {
 
     document.addEventListener('mousemove', e => {
       if (!this.locked) return;
-      // Clamp to reject browser pointer-lock spikes (Chromium sometimes fires
-      // movementX/Y in the hundreds on a single frame — causes view teleporting)
-      const MAX_MOVEMENT = 150;  // px per event — well above any real flick
-      let mx = e.movementX;
-      let my = e.movementY;
-      if (Math.abs(mx) > MAX_MOVEMENT || Math.abs(my) > MAX_MOVEMENT) return; // discard spike
-      const sens = 0.002 * settings.get('mouseSensitivity');
-      this.yaw   -= mx * sens;
-      this.pitch  -= my * sens;
-      this.pitch = Math.max(-Math.PI / 2.2, Math.min(Math.PI / 2.2, this.pitch));
+      // Accumulate deltas — applied in update() so no input is lost at low FPS
+      this.mouseDX += e.movementX;
+      this.mouseDY += e.movementY;
     });
 
     document.addEventListener('pointerlockchange', () => {
@@ -184,6 +181,14 @@ export class Player {
   update(dt: number): { stairsUp: boolean; stairsDown: boolean; isExit: boolean } {
     this.stairCooldown -= dt;
     this.justJumped  = false;
+
+    // ── Apply accumulated mouse input ──────────────────────────────────
+    const sens = 0.002 * settings.get('mouseSensitivity');
+    this.yaw   -= this.mouseDX * sens;
+    this.pitch -= this.mouseDY * sens;
+    this.pitch  = Math.max(-Math.PI / 2.2, Math.min(Math.PI / 2.2, this.pitch));
+    this.mouseDX = 0;
+    this.mouseDY = 0;
 
     // ── Crouch, Sprint & stamina ──────────────────────────────────────
     const holdCrouch = !!(this.keys['KeyC'] || this.keys['ControlLeft'] || this.keys['ControlRight']);
