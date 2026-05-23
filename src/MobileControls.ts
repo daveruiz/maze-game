@@ -231,7 +231,7 @@ export class MobileControls {
         font-family: "Barriecito", system-ui;
         touch-action: none;
       }
-      #mobile-rotate-notice .rotate-icon { font-size: 3rem; margin-bottom: 16px; filter: brightness(0) invert(1); }
+      #mobile-rotate-notice .rotate-icon { font-size: 3rem; margin-bottom: 16px; filter: grayscale(1); }
       #mobile-rotate-notice .rotate-text {
         font-size: 1rem; color: #e8c56d;
         letter-spacing: 3px; text-transform: uppercase;
@@ -249,7 +249,7 @@ export class MobileControls {
         font-family: "Barriecito", system-ui;
         touch-action: none;
       }
-      #fullscreen-cta .cta-icon { font-size: 3rem; margin-bottom: 16px; filter: brightness(0) invert(1); }
+      #fullscreen-cta .cta-icon { font-size: 3rem; margin-bottom: 16px; filter: grayscale(1); }
       #fullscreen-cta .cta-text {
         font-size: 1.1rem; color: #e8c56d;
         letter-spacing: 3px; text-transform: uppercase;

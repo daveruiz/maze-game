@@ -255,7 +255,7 @@
       width: 1.6em;
       flex-shrink: 0;
       text-align: center;
-      filter: brightness(0) invert(1);
+      filter: grayscale(1);
     }
     .hud-bar-track {
       width: 140px;
@@ -371,22 +371,22 @@
 
       <div id="hud" style="display:none;">
         <div id="crosshair-area">
-          <span id="ci-visibility" style="font-size:22px;opacity:0.1;transition:opacity 0.15s;line-height:1;filter:brightness(0) invert(1)">👁</span>
+          <span id="ci-visibility" style="font-size:22px;opacity:0.1;transition:opacity 0.15s;line-height:1;filter:grayscale(1)">👁</span>
           <div id="crosshair"></div>
-          <span id="ci-noise" style="font-size:22px;opacity:0.1;transition:opacity 0.15s;line-height:1;filter:brightness(0) invert(1)">🔊</span>
+          <span id="ci-noise" style="font-size:22px;opacity:0.1;transition:opacity 0.15s;line-height:1;filter:grayscale(1)">🔊</span>
         </div>
         <div id="info-panel">
           <div id="floor-text">FLOOR 1 / 3</div>
         </div>
         <div id="stamina-hud" style="position:absolute;top:54%;left:50%;transform:translateX(-50%);display:none;pointer-events:none;opacity:0;transition:opacity 0.3s;">
           <div style="display:flex;align-items:center;gap:6px;opacity:0.5;">
-            <span id="stamina-icon" style="font-size:18px;line-height:1;filter:brightness(0) invert(1);opacity:0;transition:opacity 0.2s;">🏃</span>
+            <span id="stamina-icon" style="font-size:18px;line-height:1;filter:grayscale(1);opacity:0;transition:opacity 0.2s;">🏃</span>
             <div style="width:60px;height:3px;background:rgba(255,255,255,0.15);border-radius:2px;overflow:hidden;">
               <div id="stamina-fill" style="height:100%;width:100%;background:#4f8;transition:width 0.2s,background 0.2s;border-radius:2px;"></div>
             </div>
           </div>
         </div>
-        <div id="battery-low" style="position:absolute;bottom:40%;left:50%;transform:translateX(-50%);font-size:1.7rem;color:#f44;letter-spacing:2px;font-weight:bold;text-shadow:0 0 10px #f44;opacity:0;transition:opacity 0.3s;pointer-events:none;"><span style="filter:brightness(0) invert(1)">🔋</span> LOW BATTERY</div>
+        <div id="battery-low" style="position:absolute;bottom:40%;left:50%;transform:translateX(-50%);font-size:1.7rem;color:#f44;letter-spacing:2px;font-weight:bold;text-shadow:0 0 10px #f44;opacity:0;transition:opacity 0.3s;pointer-events:none;"><span style="filter:grayscale(1)">🔋</span> LOW BATTERY</div>
         <!-- Left HUD stack: items listed bottom-first (column-reverse anchors at bottom) -->
         <div id="left-hud" style="position:absolute;bottom:32px;left:58px;display:flex;flex-direction:column-reverse;gap:6px;align-items:flex-start;">
           <div id="battery-hud" class="hud-bar">
