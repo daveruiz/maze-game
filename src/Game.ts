@@ -203,9 +203,8 @@ export class Game {
     // Debug full-bright light (added to scene on demand)
     this.debugAmbient = new THREE.AmbientLight(0xffffff, 6);
 
-    // Flashlight toggle + keyboard/mouse reclaims control from gamepad
+    // Flashlight toggle — mode switching is now handled by InputMode listeners
     document.addEventListener('keydown', e => {
-      this.gamepad.onKeyboardInput();
       if (e.code === 'KeyF' && !e.repeat) this.toggleFlashlight();
       if (e.code === 'Backquote' && !e.repeat) this.toggleDebugMenu();
       if (e.code === 'Escape' && !e.repeat) {
@@ -225,8 +224,9 @@ export class Game {
         if (this.pausedByMenu) {
           this.pausedByMenu = false;
           this.resumeGame();
-          if (!inputMode.isTouch) this.player?.requestLock();
-          else this.mobileControls?.show();
+          if (inputMode.isKeyboard) this.player?.requestLock();
+          else if (inputMode.isTouch) this.mobileControls?.show();
+          // gamepad mode: no pointer lock, no mobile controls
         }
       }
     });
@@ -236,9 +236,6 @@ export class Game {
         this.resumeGame();
         if (inputMode.isTouch) this.mobileControls?.show();
       });
-    });
-    document.addEventListener('mousemove', () => {
-      this.gamepad.onKeyboardInput();
     });
     document.addEventListener('mousedown', e => {
       if (e.button === 0) {
@@ -365,8 +362,8 @@ export class Game {
       this.mobileControls.showCTAIfNeeded();
     }
 
-    // Desktop mouse: request pointer lock
-    if (!inputMode.isTouch) {
+    // Keyboard/mouse: request pointer lock (not for touch or gamepad)
+    if (inputMode.isKeyboard) {
       this.player.requestLock();
     }
 
@@ -1464,8 +1461,8 @@ if (caught && !caughtBy) {
       if (this.pausedByMenu) {
         this.pausedByMenu = false;
         this.resumeGame();
-        if (!inputMode.isTouch) this.player?.requestLock();
-        else this.mobileControls?.show();
+        if (inputMode.isKeyboard) this.player?.requestLock();
+        else if (inputMode.isTouch) this.mobileControls?.show();
       }
     }
   }
@@ -1488,12 +1485,12 @@ if (caught && !caughtBy) {
     this.setVisibleFloor(fi);
     this.updateItemsHUD();
     this.updateDebugFloorButtons();
-    // Close debug menu and re-lock pointer
+    // Close debug menu and re-lock pointer (keyboard mode only)
     this.debugMenuOpen = false;
     this.pausedByMenu = false;
     document.getElementById('debug-menu')!.style.display = 'none';
     this.resumeGame();
-    this.player.requestLock();
+    if (inputMode.isKeyboard) this.player.requestLock();
   }
 
   private endGame() {

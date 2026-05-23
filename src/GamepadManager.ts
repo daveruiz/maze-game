@@ -1,54 +1,53 @@
 import { Player } from './Player';
 import { inputMode } from './InputMode';
 
-// Standard gamepad mapping indices
+// Standard gamepad button / axis mapping (Xinput / PS layout)
 const AXIS_LX = 0;
 const AXIS_LY = 1;
 const AXIS_RX = 2;
 const AXIS_RY = 3;
 
-const BTN_A     = 0;   // Jump (Cross / A)
-const BTN_B     = 1;   // Crouch (Circle / B) — held
-const BTN_X     = 2;   // Flashlight (Square / X)
-const BTN_L3    = 10;  // Left stick press — sprint toggle
+const BTN_A  = 0;   // Jump  (Cross / A)
+const BTN_B  = 1;   // Crouch (Circle / B) — held
+const BTN_X  = 2;   // Flashlight (Square / X)
+const BTN_L3 = 10;  // Left stick press — sprint latch
 
 const DEAD_ZONE        = 0.20;
 const LOOK_SENSITIVITY = 0.04;  // radians per frame at full tilt
-const MAX_LOOK_DELTA   = 0.06;  // clamp to prevent random spikes
+const MAX_LOOK_DELTA   = 0.06;  // clamp against random spikes
 
 export class GamepadManager {
   private player: Player | null = null;
   private toggleFlashlight: () => void;
 
-  // Sprint latch: L3 turns sprint on, stops when player releases stick
   private sprintLatched = false;
   private prevL3 = false;
   private prevA  = false;
   private prevX  = false;
 
-  // Track whether gamepad is the active input source
-  private active = false;
-
   constructor(callbacks: { toggleFlashlight: () => void }) {
     this.toggleFlashlight = callbacks.toggleFlashlight;
+
+    // Clear all virtual keys whenever input mode leaves gamepad
+    inputMode.onChange((mode) => {
+      if (mode !== 'gamepad') this.clearKeys();
+    });
   }
 
   setPlayer(player: Player) { this.player = player; }
 
-  /** Call every frame — reads ALL connected gamepads and feeds the player. */
+  /** Call every frame from the game loop — only runs in gamepad mode. */
   update(): boolean {
-    if (!this.player) return false;
-    if (inputMode.isTouch) return false; // touch controls take priority
+    if (!this.player || !inputMode.isGamepad) return false;
 
     const gamepads = navigator.getGamepads?.() ?? [];
 
-    // Accumulate input from all connected gamepads
     let lx = 0, ly = 0, rx = 0, ry = 0;
     let l3 = false, a = false, b = false, x = false;
     let anyConnected = false;
 
     for (const gp of gamepads) {
-      if (!gp || !gp.connected) continue;
+      if (!gp?.connected) continue;
       anyConnected = true;
 
       const glx = this.applyDeadZone(gp.axes[AXIS_LX] ?? 0);
@@ -56,47 +55,20 @@ export class GamepadManager {
       const grx = this.applyDeadZone(gp.axes[AXIS_RX] ?? 0);
       const gry = this.applyDeadZone(gp.axes[AXIS_RY] ?? 0);
 
-      // Use whichever gamepad has the strongest input on each axis
       if (Math.abs(glx) > Math.abs(lx)) lx = glx;
       if (Math.abs(gly) > Math.abs(ly)) ly = gly;
       if (Math.abs(grx) > Math.abs(rx)) rx = grx;
       if (Math.abs(gry) > Math.abs(ry)) ry = gry;
 
-      // OR buttons across all gamepads
       l3 = l3 || (gp.buttons[BTN_L3]?.pressed ?? false);
-      a  = a  || (gp.buttons[BTN_A]?.pressed ?? false);
-      b  = b  || (gp.buttons[BTN_B]?.pressed ?? false);
-      x  = x  || (gp.buttons[BTN_X]?.pressed ?? false);
+      a  = a  || (gp.buttons[BTN_A]?.pressed  ?? false);
+      b  = b  || (gp.buttons[BTN_B]?.pressed  ?? false);
+      x  = x  || (gp.buttons[BTN_X]?.pressed  ?? false);
     }
 
-    if (!anyConnected) {
-      // No gamepad — release ownership if we had it
-      if (this.active) this.deactivate();
-      return false;
-    }
+    if (!anyConnected) return false;
 
-    // Require deliberate input to activate (stick > 0.4 or button press)
-    // Prevents phantom/drifting gamepads from hijacking mouse control
-    const ACTIVATE_THRESHOLD = 0.4;
-    const hasInput = Math.abs(lx) > ACTIVATE_THRESHOLD || Math.abs(ly) > ACTIVATE_THRESHOLD
-                  || Math.abs(rx) > ACTIVATE_THRESHOLD || Math.abs(ry) > ACTIVATE_THRESHOLD
-                  || l3 || a || b || x;
-
-    // Activate on first real input, deactivate when keyboard takes over
-    // (keyboard deactivation is handled by the keydown listener below)
-    if (hasInput && !this.active) {
-      this.active = true;
-    }
-
-    if (!this.active) {
-      // Gamepad connected but not active — don't override keyboard
-      this.prevL3 = l3;
-      this.prevA = a;
-      this.prevX = x;
-      return false;
-    }
-
-    // ── Left stick → movement ──────────────────────────────────────────
+    // ── Movement (left stick) ──────────────────────────────────────────
     this.player.setKey('KeyW', ly < -0.35);
     this.player.setKey('KeyS', ly >  0.35);
     this.player.setKey('KeyA', lx < -0.35);
@@ -104,22 +76,16 @@ export class GamepadManager {
 
     const moving = Math.abs(lx) > 0.01 || Math.abs(ly) > 0.01;
 
-    // ── L3 sprint latch ────────────────────────────────────────────────
-    if (l3 && !this.prevL3) {
-      this.sprintLatched = !this.sprintLatched;
-    }
+    // ── Sprint latch (L3 toggles, auto-off when stick released) ───────
+    if (l3 && !this.prevL3) this.sprintLatched = !this.sprintLatched;
     this.prevL3 = l3;
-
-    if (this.sprintLatched && !moving) {
-      this.sprintLatched = false;
-    }
-
+    if (this.sprintLatched && !moving) this.sprintLatched = false;
     this.player.setKey('ShiftLeft', this.sprintLatched && moving);
 
-    // ── B button → crouch (held) ───────────────────────────────────────
+    // ── Crouch (B held) ────────────────────────────────────────────────
     this.player.setKey('KeyC', b);
 
-    // ── Right stick → look ─────────────────────────────────────────────
+    // ── Look (right stick) ─────────────────────────────────────────────
     if (Math.abs(rx) > 0.01 || Math.abs(ry) > 0.01) {
       const dx = Math.max(-MAX_LOOK_DELTA, Math.min(MAX_LOOK_DELTA, rx * LOOK_SENSITIVITY));
       const dy = Math.max(-MAX_LOOK_DELTA, Math.min(MAX_LOOK_DELTA, ry * LOOK_SENSITIVITY));
@@ -136,9 +102,7 @@ export class GamepadManager {
     return true;
   }
 
-  /** Release gamepad control — clears virtual keys so keyboard can take over */
-  deactivate() {
-    this.active = false;
+  private clearKeys() {
     this.sprintLatched = false;
     if (this.player) {
       for (const k of ['KeyW', 'KeyS', 'KeyA', 'KeyD', 'ShiftLeft', 'KeyC']) {
@@ -147,10 +111,11 @@ export class GamepadManager {
     }
   }
 
-  /** Call from outside when keyboard input is detected */
-  onKeyboardInput() {
-    if (this.active) this.deactivate();
-  }
+  /** Switch input mode to keyboard — kept for external callers. */
+  deactivate() { inputMode.setMode('keyboard'); }
+
+  /** No-op — InputMode handles mode switching via its own listeners. */
+  onKeyboardInput() {}
 
   private applyDeadZone(value: number): number {
     if (Math.abs(value) < DEAD_ZONE) return 0;

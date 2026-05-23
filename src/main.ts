@@ -32,8 +32,6 @@ const preloadPromise = Promise.all([
 ]).then(() => {});
 
 // ── Menu atmosphere drone ────────────────────────────────────────────────
-// Identical waveform to the in-game proximity drone; played at a low gain
-// to simulate the enemy being far away while the title screen is visible.
 let menuCtx: AudioContext | null = null;
 let menuDroneGain: GainNode | null = null;
 
@@ -65,7 +63,6 @@ function startMenuDrone() {
   src.start();
   menuDroneGain = gain;
 
-  // Fade in slowly — simulates enemy lurking far away
   gain.gain.linearRampToValueAtTime(0.10, menuCtx.currentTime + 4.0);
 }
 
@@ -77,38 +74,33 @@ function stopMenuDrone() {
   setTimeout(() => { menuCtx?.close(); menuCtx = null; menuDroneGain = null; }, 600);
 }
 
-// Start the drone on first pointer interaction with the page
 document.addEventListener('pointerdown', startMenuDrone, { once: true });
 
-// Install input-mode detection early so first touch/mouse is caught
+// ── Input mode — install early so first event is caught ─────────────────
 inputMode.install();
 
-// React to input-mode switches
+// React to input mode switches
 inputMode.onChange((mode) => {
-  const controlsList = overlay.querySelector('.controls-list') as HTMLElement;
-  if (controlsList) controlsList.style.display = mode === 'touch' ? 'none' : '';
+  const kbEl = document.getElementById('kb-controls');
+  const gpEl = document.getElementById('gp-controls');
+  if (kbEl) kbEl.style.display = (mode === 'gamepad' || mode === 'touch') ? 'none' : '';
+  if (gpEl) gpEl.style.display = mode === 'gamepad' ? '' : 'none';
 
-  // Release pointer lock when switching to touch
-  if (mode === 'touch' && document.pointerLockElement) {
+  if (mode !== 'keyboard' && document.pointerLockElement) {
     document.exitPointerLock();
   }
-  // Deactivate gamepad when switching to touch (same as keyboard reclaim)
-  if (mode === 'touch' && game) {
-    game.deactivateGamepad();
-  }
+  // GamepadManager clears its own keys via its inputMode.onChange subscription.
+  // MobileControls shows/hides itself via its inputMode.onChange subscription.
 });
 
 startBtn.addEventListener('click', () => {
   stopMenuDrone();
 
-  // Snap blackout to fully opaque behind the overlay (no transition)
   blackout.style.transition = 'none';
   blackout.style.opacity = '1';
-  // Fade the overlay out (0.5s via CSS transition)
   overlay.classList.remove('ready');
 
   setTimeout(() => {
-    // Screen is black — show loading indicator then start game
     overlay.style.display = 'none';
     hud.style.display = 'block';
     loadingScreen.style.display = 'block';
@@ -122,13 +114,11 @@ startBtn.addEventListener('click', () => {
         game.start();
       }
 
-      // Hide loading message before the fade-in begins
       loadingScreen.style.opacity = '0';
       setTimeout(() => { loadingScreen.style.display = 'none'; }, 400);
 
-      if (!inputMode.isTouch) document.body.requestPointerLock();
+      if (inputMode.isKeyboard) document.body.requestPointerLock();
 
-      // After 1s in black, fade the scene in over 1.5s (audio was already playing)
       setTimeout(() => {
         blackout.style.transition = 'opacity 1.5s ease-in';
         blackout.style.opacity = '0';
@@ -137,10 +127,9 @@ startBtn.addEventListener('click', () => {
   }, 500);
 });
 
-// Mouse mode: click on canvas re-acquires pointer lock (but not on UI elements)
+// Mouse mode: canvas click re-acquires pointer lock
 container.addEventListener('click', (e) => {
-  if (game && !inputMode.isTouch && !document.pointerLockElement) {
-    // Don't re-lock if overlay is visible (retry/start screen) or clicking UI
+  if (game && inputMode.isKeyboard && !document.pointerLockElement) {
     if (overlay.style.display !== 'none') return;
     const target = e.target as HTMLElement;
     if (target.closest('#debug-menu') || target.closest('#hud') || target.closest('.mobile-btn')) return;
@@ -148,7 +137,7 @@ container.addEventListener('click', (e) => {
   }
 });
 
-// Pause game when fullscreen exits on touch/mobile devices
+// Pause/resume on fullscreen change (touch/mobile devices)
 const onFullscreenChange = () => {
   if (!game || !inputMode.isTouch) return;
   const isFS = !!(document.fullscreenElement || (document as any).webkitFullscreenElement);
@@ -161,30 +150,155 @@ const onFullscreenChange = () => {
 document.addEventListener('fullscreenchange', onFullscreenChange);
 document.addEventListener('webkitfullscreenchange', onFullscreenChange);
 
-// Gamepad: poll for buttons on menu screens and for in-game options toggle
-let gpPrevConfirm = false;
-let gpPrevStart   = false;
+// ── Gamepad menu navigation ──────────────────────────────────────────────
+
+// Button indices (standard gamepad mapping)
+const GP_A     = 0;
+const GP_B     = 1;
+const GP_START = 9;
+const GP_UP    = 12;
+const GP_DOWN  = 13;
+const GP_LEFT  = 14;
+const GP_RIGHT = 15;
+
+// Previous button state for edge detection
+const gpPrev = { a: false, b: false, start: false };
+
+// Navigation state
+let gpNavCooldown = 0;
+let gpMenuFocusIdx = -1;
+let gpMenuItems: HTMLElement[] = [];
+
+function gpGetMenuItems(): HTMLElement[] {
+  const menu = document.getElementById('options-menu');
+  if (!menu || menu.style.display !== 'block') return [];
+  const items: HTMLElement[] = [];
+  menu.querySelectorAll<HTMLElement>(
+    'button, input[type="checkbox"], input[type="range"]'
+  ).forEach(el => {
+    if (el.closest('label.disabled')) return;
+    if (el.getBoundingClientRect().height === 0) return; // hidden
+    items.push(el);
+  });
+  return items;
+}
+
+function gpFocusTarget(el: HTMLElement): HTMLElement {
+  return (el.closest('label') as HTMLElement) ?? el;
+}
+
+function gpSetMenuFocus(items: HTMLElement[], idx: number) {
+  // Remove focus from previous element
+  if (gpMenuFocusIdx >= 0 && gpMenuFocusIdx < gpMenuItems.length) {
+    gpFocusTarget(gpMenuItems[gpMenuFocusIdx]).classList.remove('gp-focus');
+  }
+  gpMenuFocusIdx = Math.max(0, Math.min(items.length - 1, idx));
+  gpMenuItems = items;
+  if (gpMenuFocusIdx >= 0 && gpMenuFocusIdx < items.length) {
+    const target = gpFocusTarget(items[gpMenuFocusIdx]);
+    target.classList.add('gp-focus');
+    target.scrollIntoView?.({ block: 'nearest' });
+  }
+}
+
+function gpClearMenuFocus() {
+  if (gpMenuFocusIdx >= 0 && gpMenuFocusIdx < gpMenuItems.length) {
+    gpFocusTarget(gpMenuItems[gpMenuFocusIdx]).classList.remove('gp-focus');
+  }
+  gpMenuFocusIdx = -1;
+  gpMenuItems = [];
+}
+
 function pollGamepadForMenu() {
   requestAnimationFrame(pollGamepadForMenu);
 
+  // Read all connected gamepads
   const gamepads = navigator.getGamepads?.() ?? [];
-  let confirm = false;
-  let start   = false;
+  let navUp = false, navDown = false, navLeft = false, navRight = false;
+  let btnA = false, btnB = false, btnStart = false;
+
   for (const gp of gamepads) {
     if (!gp?.connected) continue;
-    if (gp.buttons[0]?.pressed || gp.buttons[9]?.pressed) confirm = true;
-    if (gp.buttons[9]?.pressed) start = true;
+    navUp    = navUp    || (gp.buttons[GP_UP]?.pressed    ?? false);
+    navDown  = navDown  || (gp.buttons[GP_DOWN]?.pressed  ?? false);
+    navLeft  = navLeft  || (gp.buttons[GP_LEFT]?.pressed  ?? false);
+    navRight = navRight || (gp.buttons[GP_RIGHT]?.pressed ?? false);
+    btnA     = btnA     || (gp.buttons[GP_A]?.pressed     ?? false);
+    btnB     = btnB     || (gp.buttons[GP_B]?.pressed     ?? false);
+    btnStart = btnStart || (gp.buttons[GP_START]?.pressed ?? false);
+    // Left stick supplements D-pad for navigation
+    const ly = gp.axes[1] ?? 0;
+    const lx = gp.axes[0] ?? 0;
+    if (ly < -0.5) navUp    = true;
+    if (ly >  0.5) navDown  = true;
+    if (lx < -0.5) navLeft  = true;
+    if (lx >  0.5) navRight = true;
   }
 
+  // ── Overlay (home / death screen) ──────────────────────────────────
   if (overlay.style.display !== 'none') {
-    // Home / death screen: A or Start clicks the action button
-    if (confirm && !gpPrevConfirm) startBtn.click();
-  } else {
-    // In-game: Start toggles options menu
-    if (start && !gpPrevStart) (window as any).optionsMenu?.toggle();
+    if ((btnA || btnStart) && !(gpPrev.a || gpPrev.start)) startBtn.click();
+    gpPrev.a = btnA; gpPrev.b = btnB; gpPrev.start = btnStart;
+    if (gpMenuFocusIdx >= 0) gpClearMenuFocus(); // reset nav when overlay opens
+    return;
   }
 
-  gpPrevConfirm = confirm;
-  gpPrevStart   = start;
+  const menuOpen = (window as any).optionsMenu?.isOpen?.() ?? false;
+
+  // ── Options menu navigation ─────────────────────────────────────────
+  if (menuOpen) {
+    const items = gpGetMenuItems();
+
+    // Initialise focus when menu first opens
+    if (gpMenuFocusIdx < 0 && items.length > 0) {
+      gpSetMenuFocus(items, 0);
+    }
+
+    if (gpNavCooldown > 0) gpNavCooldown--;
+
+    // Vertical navigation (D-pad / left stick up-down)
+    const vertDir = navDown ? 1 : (navUp ? -1 : 0);
+    if (vertDir !== 0 && gpNavCooldown === 0) {
+      gpSetMenuFocus(items, gpMenuFocusIdx + vertDir);
+      gpNavCooldown = 12; // ~200 ms repeat at 60 fps
+    }
+
+    // Horizontal navigation adjusts range sliders
+    const horizDir = navRight ? 1 : (navLeft ? -1 : 0);
+    const focused  = items[gpMenuFocusIdx];
+    if (horizDir !== 0 && gpNavCooldown === 0 &&
+        focused instanceof HTMLInputElement && focused.type === 'range') {
+      const min  = Number(focused.min);
+      const max  = Number(focused.max);
+      const step = Math.max(Number(focused.step) || 1, (max - min) / 20);
+      const newV = Math.max(min, Math.min(max, Number(focused.value) + horizDir * step));
+      focused.value = String(Math.round(newV));
+      focused.dispatchEvent(new Event('input', { bubbles: true }));
+      gpNavCooldown = 3;
+    }
+
+    // A = confirm / toggle
+    if (btnA && !gpPrev.a) {
+      if (focused instanceof HTMLInputElement && focused.type === 'checkbox') {
+        focused.checked = !focused.checked;
+        focused.dispatchEvent(new Event('change', { bubbles: true }));
+      } else if (focused) {
+        focused.click();
+      }
+    }
+
+    // B or Start = close menu
+    if ((btnB && !gpPrev.b) || (btnStart && !gpPrev.start)) {
+      (window as any).optionsMenu?.close();
+    }
+  } else {
+    // In-game, no menu: Start toggles options menu
+    if (btnStart && !gpPrev.start) (window as any).optionsMenu?.toggle();
+    // Clear stale focus when menu is not open
+    if (gpMenuFocusIdx >= 0) gpClearMenuFocus();
+  }
+
+  gpPrev.a = btnA; gpPrev.b = btnB; gpPrev.start = btnStart;
 }
+
 pollGamepadForMenu();
