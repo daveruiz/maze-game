@@ -15,6 +15,7 @@ import { GamepadManager } from './GamepadManager';
 import { distributePositions } from './MapDistribution';
 import soundConfig from './SoundConfig';
 import { computeSoundField, computeSoundEnergies } from './SoundField';
+import { settings } from './Settings';
 
 const NUM_FLOORS = 3;
 
@@ -118,13 +119,15 @@ export class Game {
   private micEnabled       = false;
   private micReverbEnabled = false;
 
+  // Settings live-update unsubscribe handle
+  private _settingsUnsub: (() => void) | null = null;
+
   // Unified player visibility (0=dark/hidden, 1=fully lit) — computed each frame
   private playerVisibility = 0;
 
   constructor(container: HTMLElement) {
     this.renderer = new THREE.WebGLRenderer({ antialias: false });
-    // Default 4× downscale for performance; debug menu can adjust
-    this.renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2) / 4);
+    this.renderer.setPixelRatio(window.devicePixelRatio / settings.get('pixelScale'));
     this.renderer.setSize(window.innerWidth, window.innerHeight);
     this.renderer.shadowMap.enabled = true;
     this.renderer.shadowMap.type = THREE.BasicShadowMap; // hard shadows, cheapest
@@ -335,19 +338,12 @@ export class Game {
       this.player.requestLock();
     }
 
-    // Read vibration preference from checkbox
-    const vibCb = document.getElementById('vibration-cb') as HTMLInputElement | null;
-    this.vibrationEnabled = vibCb?.checked ?? false;
+    // Apply settings on (re)start
+    this.applySettings();
 
-    // Read mic preferences and request permission if needed
-    const micCb      = document.getElementById('mic-cb')        as HTMLInputElement | null;
-    const micRevCb   = document.getElementById('mic-reverb-cb') as HTMLInputElement | null;
-    this.micEnabled       = micCb?.checked ?? false;
-    this.micReverbEnabled = micRevCb?.checked ?? false;
-    if (this.micEnabled) {
-      this.setupMicrophone();
-    } else {
-      this.audio.disconnectMicrophone();
+    // Live settings changes while game is running
+    if (!this._settingsUnsub) {
+      this._settingsUnsub = settings.onChange(() => this.applySettings());
     }
 
     this.running = true;
@@ -954,6 +950,45 @@ if (caught && !caughtBy) {
     }
   }
 
+  private applySettings() {
+    const s = settings;
+
+    // Resolution
+    this.renderer.setPixelRatio(window.devicePixelRatio / s.get('pixelScale'));
+    this.renderer.setSize(window.innerWidth, window.innerHeight);
+
+    // Shadows
+    const shadowsOn = s.get('shadows');
+    this.flashlight.castShadow = shadowsOn;
+    this.lanternPool.slice(0, 2).forEach(l => { l.castShadow = shadowsOn; });
+
+    // Posterize
+    this.horrorPass.uniforms['posterLevels'].value = s.get('posterize') ? 12.0 : 256.0;
+
+    // Vibration
+    this.vibrationEnabled = s.get('vibration');
+
+    // Microphone
+    const micOn  = s.get('micInput');
+    const revOn  = s.get('micReverb');
+    const micChanged  = micOn  !== this.micEnabled;
+    const revChanged  = revOn  !== this.micReverbEnabled;
+    this.micEnabled       = micOn;
+    this.micReverbEnabled = revOn;
+
+    if (micChanged) {
+      if (micOn) {
+        this.setupMicrophone();
+      } else {
+        this.audio.disconnectMicrophone();
+      }
+    } else if (revChanged && micOn) {
+      // Reverb toggled while mic is connected — reconnect with new setting
+      this.audio.disconnectMicrophone();
+      this.setupMicrophone();
+    }
+  }
+
   private async setupMicrophone() {
     try {
       const stream = await navigator.mediaDevices.getUserMedia({ audio: true, video: false });
@@ -961,6 +996,7 @@ if (caught && !caughtBy) {
     } catch {
       // Permission denied or mic unavailable — silently disable
       this.micEnabled = false;
+      settings.set('micInput', false);
       const cb = document.getElementById('mic-cb') as HTMLInputElement | null;
       if (cb) cb.checked = false;
     }
@@ -1370,32 +1406,6 @@ if (caught && !caughtBy) {
       this.debugInfiniteResources = irCb.checked;
     });
 
-    // Pixel scale buttons — live in the options menu, wired once here
-    // Use the real DPR (uncapped) so 1× gives true native resolution
-    const baseDPR = window.devicePixelRatio;
-    document.querySelectorAll<HTMLButtonElement>('button[data-pixelscale]').forEach(btn => {
-      btn.addEventListener('click', () => {
-        const scale = parseInt(btn.dataset.pixelscale ?? '1', 10);
-        this.renderer.setPixelRatio(baseDPR / scale);
-        this.renderer.setSize(window.innerWidth, window.innerHeight);
-        document.querySelectorAll<HTMLButtonElement>('button[data-pixelscale]').forEach(b => b.classList.remove('active'));
-        btn.classList.add('active');
-      });
-    });
-
-    // Shadows toggle
-    const shadowsCb = document.getElementById('opt-shadows') as HTMLInputElement;
-    shadowsCb.addEventListener('change', () => {
-      const on = shadowsCb.checked;
-      this.flashlight.castShadow = on;
-      this.lanternPool.slice(0, 2).forEach(l => { l.castShadow = on; });
-    });
-
-    // Posterize effect toggle
-    const posterizeCb = document.getElementById('opt-posterize') as HTMLInputElement;
-    posterizeCb.addEventListener('change', () => {
-      this.horrorPass.uniforms['posterLevels'].value = posterizeCb.checked ? 12.0 : 256.0;
-    });
   }
 
   private toggleFlashlight() {

@@ -1,0 +1,50 @@
+export interface SettingsData {
+  pixelScale: number;   // renderer divisor: 1=native, 2=half, 4=quarter, 8=eighth
+  shadows:    boolean;
+  posterize:  boolean;
+  vibration:  boolean;
+  micInput:   boolean;
+  micReverb:  boolean;
+}
+
+const DEFAULTS: SettingsData = {
+  pixelScale: 4,
+  shadows:    true,
+  posterize:  true,
+  vibration:  false,
+  micInput:   false,
+  micReverb:  false,
+};
+
+const KEY = 'dads-nightmare-settings';
+
+class Settings {
+  private _data: SettingsData;
+  private _listeners = new Set<(data: SettingsData) => void>();
+
+  constructor() {
+    try {
+      const raw = localStorage.getItem(KEY);
+      this._data = raw ? { ...DEFAULTS, ...JSON.parse(raw) } : { ...DEFAULTS };
+    } catch {
+      this._data = { ...DEFAULTS };
+    }
+  }
+
+  get<K extends keyof SettingsData>(key: K): SettingsData[K] {
+    return this._data[key];
+  }
+
+  set<K extends keyof SettingsData>(key: K, value: SettingsData[K]) {
+    this._data[key] = value;
+    try { localStorage.setItem(KEY, JSON.stringify(this._data)); } catch {}
+    this._listeners.forEach(fn => fn({ ...this._data }));
+  }
+
+  onChange(fn: (data: SettingsData) => void): () => void {
+    this._listeners.add(fn);
+    return () => this._listeners.delete(fn);
+  }
+}
+
+export const settings = new Settings();

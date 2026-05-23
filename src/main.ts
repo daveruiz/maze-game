@@ -1,6 +1,9 @@
 import { Game } from './Game';
 import { inputMode } from './InputMode';
 import { AudioManager } from './AudioManager';
+import { initOptionsMenu } from './OptionsMenu';
+
+initOptionsMenu();
 
 const container     = document.getElementById('canvas-container')!;
 const overlay       = document.getElementById('overlay')!;

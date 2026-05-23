@@ -483,40 +483,16 @@
   </div>
   <script>
     (function () {
-      // ── Options menu ─────────────────────────────────────────────────
+      // ── Options menu open/close ──────────────────────────────────────
       const optMenu = document.getElementById('options-menu');
       const optBtn  = document.getElementById('options-btn');
-      function toggleOptions(e) {
+      optBtn.addEventListener('click', function(e) {
         e.stopPropagation();
         optMenu.style.display = optMenu.style.display === 'block' ? 'none' : 'block';
-      }
-      function closeOptions(e) {
+      });
+      document.addEventListener('click', function(e) {
         if (!optMenu.contains(e.target) && e.target !== optBtn) {
           optMenu.style.display = 'none';
-        }
-      }
-      optBtn.addEventListener('click', toggleOptions);
-      document.addEventListener('click', closeOptions);
-
-      // Show vibration row only when haptics are available
-      function showVibration() {
-        document.getElementById('vibration-label').style.display = 'flex';
-      }
-      if ('vibrate' in navigator) showVibration();
-      window.addEventListener('gamepadconnected', function(e) {
-        if (e.gamepad.vibrationActuator) showVibration();
-      });
-
-      // Voice reverb depends on mic being enabled
-      const micCb         = document.getElementById('mic-cb');
-      const micReverbLabel = document.getElementById('mic-reverb-label');
-      const micReverbCb   = document.getElementById('mic-reverb-cb');
-      micCb.addEventListener('change', function() {
-        if (micCb.checked) {
-          micReverbLabel.classList.remove('disabled');
-        } else {
-          micReverbLabel.classList.add('disabled');
-          micReverbCb.checked = false;
         }
       });
 
