@@ -1371,7 +1371,8 @@ if (caught && !caughtBy) {
     });
 
     // Pixel scale buttons — live in the options menu, wired once here
-    const baseDPR = Math.min(window.devicePixelRatio, 2);
+    // Use the real DPR (uncapped) so 1× gives true native resolution
+    const baseDPR = window.devicePixelRatio;
     document.querySelectorAll<HTMLButtonElement>('button[data-pixelscale]').forEach(btn => {
       btn.addEventListener('click', () => {
         const scale = parseInt(btn.dataset.pixelscale ?? '1', 10);
