@@ -79,23 +79,12 @@
       pointer-events: none;
     }
     #crosshair {
-      position: relative;
-      width: 20px; height: 20px;
+      width: 10px; height: 10px;
+      border-radius: 50%;
+      border: 2px solid rgba(255,255,255,0.5);
       flex-shrink: 0;
     }
-    #crosshair::before, #crosshair::after {
-      content: '';
-      position: absolute;
-      background: rgba(255,255,255,0.8);
-    }
-    #crosshair::before {
-      width: 2px; height: 100%;
-      left: 50%; transform: translateX(-50%);
-    }
-    #crosshair::after {
-      width: 100%; height: 2px;
-      top: 50%; transform: translateY(-50%);
-    }
+    #crosshair::before, #crosshair::after { content: none; }
     #info-panel {
       position: absolute;
       bottom: 16px; left: 50%;
@@ -356,9 +345,12 @@
         <div id="info-panel">
           <div id="floor-text">FLOOR 1 / 3</div>
         </div>
-        <div id="stamina-hud" style="position:absolute;top:54%;left:50%;transform:translateX(-50%);display:none;pointer-events:none;">
-          <div style="width:80px;height:4px;background:rgba(255,255,255,0.1);border-radius:2px;overflow:hidden;">
-            <div id="stamina-fill" style="height:100%;width:100%;background:#4f8;transition:width 0.2s,background 0.2s;border-radius:2px;"></div>
+        <div id="stamina-hud" style="position:absolute;top:54%;left:50%;transform:translateX(-50%);display:none;pointer-events:none;opacity:0;transition:opacity 0.3s;">
+          <div style="display:flex;align-items:center;gap:6px;">
+            <span style="font-size:18px;line-height:1;">⚡</span>
+            <div style="width:80px;height:4px;background:rgba(255,255,255,0.15);border-radius:2px;overflow:hidden;">
+              <div id="stamina-fill" style="height:100%;width:100%;background:#4f8;transition:width 0.2s,background 0.2s;border-radius:2px;"></div>
+            </div>
           </div>
         </div>
         <div id="battery-low" style="position:absolute;bottom:40%;left:50%;transform:translateX(-50%);font-size:1.7rem;color:#f44;letter-spacing:2px;font-weight:bold;text-shadow:0 0 10px #f44;opacity:0;transition:opacity 0.3s;pointer-events:none;">🔋 LOW BATTERY</div>

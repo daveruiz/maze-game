@@ -72,16 +72,10 @@ export class MobileControls {
 
   show() {
     this.container.style.display = 'block';
-    // Hide crosshair on touch
-    const ch = document.getElementById('crosshair');
-    if (ch) ch.style.display = 'none';
   }
 
   hide() {
     this.container.style.display = 'none';
-    // Restore crosshair on mouse
-    const ch = document.getElementById('crosshair');
-    if (ch) ch.style.display = '';
     // Clear any held virtual keys
     this.resetState();
   }

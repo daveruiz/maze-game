@@ -941,16 +941,14 @@ if (caught && !caughtBy) {
       this.batteryLowEl.style.opacity = '0';
     }
 
-    // Stamina bar — only visible below 50%, centered under crosshair
+    // Stamina bar — visible whenever stamina is being consumed or not full
     const stam = this.player.stamina;
-    if (stam < 50) {
-      this.staminaHudEl.style.display = 'block';
-      this.staminaFillEl.style.width = `${stam * 2}%`;  // scale: 50% stamina = 100% bar width
-      this.staminaFillEl.style.background =
-        stam > 25 ? '#fa4' : '#f44';
-    } else {
-      this.staminaHudEl.style.display = 'none';
-    }
+    const showStamina = this.player.sprinting || stam < 99.9;
+    this.staminaHudEl.style.display = 'block';
+    this.staminaHudEl.style.opacity = showStamina ? '1' : '0';
+    this.staminaFillEl.style.width = `${stam}%`;
+    this.staminaFillEl.style.background =
+      stam > 50 ? '#4f8' : stam > 25 ? '#fa4' : '#f44';
 
     this.updateItemsHUD();
     this.drawMinimap();
