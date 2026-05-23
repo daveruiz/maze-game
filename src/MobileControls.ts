@@ -314,6 +314,22 @@ export class MobileControls {
       e.preventDefault();
       this.requestFullscreen();
     }, { passive: false });
+
+    // In standalone PWA mode, go fullscreen immediately on open.
+    // Try auto-request first (works on some Android Chrome versions);
+    // if the browser blocks it (needs a user gesture), show the CTA
+    // right away so the first tap goes fullscreen before the title screen.
+    if (this.isStandalone() && this.supportsFullscreen()) {
+      const isFS = !!(document.fullscreenElement || (document as any).webkitFullscreenElement);
+      if (!isFS) {
+        const el = document.documentElement as any;
+        const rfs = el.requestFullscreen || el.webkitRequestFullscreen || el.msRequestFullscreen;
+        rfs.call(el).catch(() => {
+          // Gesture required — show CTA over the title screen
+          this.ctaOverlay.style.display = 'flex';
+        });
+      }
+    }
   }
 
   private requestFullscreen() {
@@ -353,6 +369,11 @@ export class MobileControls {
   private supportsFullscreen(): boolean {
     const el = document.documentElement as any;
     return !!(el.requestFullscreen || el.webkitRequestFullscreen || el.msRequestFullscreen);
+  }
+
+  private isStandalone(): boolean {
+    return window.matchMedia('(display-mode: standalone)').matches
+        || (window.navigator as any).standalone === true;
   }
 
   /** Call when game transitions to active state */
@@ -595,14 +616,16 @@ export class MobileControls {
 
     btn.addEventListener('touchstart', onStart, { passive: false });
     document.addEventListener('touchmove',  onMove, { passive: false });
-    document.addEventListener('touchend',   onEnd,  { passive: false });
-    document.addEventListener('touchcancel',onEnd,  { passive: false });
+    // Register end/cancel directly on the button so crouchEnd's stopPropagation()
+    // doesn't prevent activeTouchId from being cleared on the document listener.
+    btn.addEventListener('touchend',    onEnd, { passive: false });
+    btn.addEventListener('touchcancel', onEnd, { passive: false });
 
     this.editCleanup.push(() => {
       btn.removeEventListener('touchstart', onStart);
-      document.removeEventListener('touchmove',   onMove);
-      document.removeEventListener('touchend',    onEnd);
-      document.removeEventListener('touchcancel', onEnd);
+      document.removeEventListener('touchmove', onMove);
+      btn.removeEventListener('touchend',    onEnd);
+      btn.removeEventListener('touchcancel', onEnd);
     });
   }
 
