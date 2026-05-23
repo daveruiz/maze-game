@@ -89,6 +89,7 @@ export class Game {
   private hudEl:             HTMLElement;
   private floorTextEl:       HTMLElement;
   private staminaHudEl!:     HTMLElement;
+  private staminaIconEl!:    HTMLElement;
   private batteryLowEl!:     HTMLElement;
   private messageEl:         HTMLElement;
   private batteryFillEl!:    HTMLElement;
@@ -108,6 +109,10 @@ export class Game {
   // Crosshair-adjacent indicators (always visible)
   private ciVisibilityEl!:     HTMLElement;
   private ciNoiseEl!:          HTMLElement;
+
+  // Haptic feedback
+  private vibrationEnabled = false;
+  private vibrationTimer   = 0;
 
   // Unified player visibility (0=dark/hidden, 1=fully lit) — computed each frame
   private playerVisibility = 0;
@@ -161,6 +166,7 @@ export class Game {
     this.hudEl            = document.getElementById('hud')!;
     this.floorTextEl      = document.getElementById('floor-text')!;
     this.staminaHudEl     = document.getElementById('stamina-hud')!;
+    this.staminaIconEl    = document.getElementById('stamina-icon')!;
     this.batteryLowEl     = document.getElementById('battery-low')!;
     this.messageEl        = document.getElementById('message')!;
     this.batteryFillEl    = document.getElementById('battery-fill')!;
@@ -324,6 +330,10 @@ export class Game {
     if (!inputMode.isTouch) {
       this.player.requestLock();
     }
+
+    // Read vibration preference from checkbox
+    const vibCb = document.getElementById('vibration-cb') as HTMLInputElement | null;
+    this.vibrationEnabled = vibCb?.checked ?? false;
 
     this.running = true;
     this.clock.start();
@@ -706,6 +716,7 @@ if (caught && !caughtBy) {
     // Update proximity drone + proximity tension growl
     this.audio.updateProximityDrone(nearestDist);
     this.audio.updateProximityTension(nearestDist);
+    this.updateVibration(dt, nearestDist);
 
     // Chase tension — rising high-pitch shriek
     const isChasing = nearestChasingDist < Infinity;
@@ -891,6 +902,37 @@ if (caught && !caughtBy) {
     this.updateItemsHUD();
   }
 
+  private updateVibration(dt: number, nearestDist: number) {
+    if (!this.vibrationEnabled) return;
+    const MAX_DIST = 18, MIN_DIST = 3;
+    if (nearestDist > MAX_DIST) { this.vibrationTimer = 0; return; }
+
+    const t = 1 - Math.max(0, Math.min(1, (nearestDist - MIN_DIST) / (MAX_DIST - MIN_DIST)));
+    const intensity = t * t; // 0..1, quadratic
+
+    // Gamepad low-frequency (left) motor
+    const gamepads = navigator.getGamepads?.() ?? [];
+    for (const gp of gamepads) {
+      if (!gp) continue;
+      const actuator = (gp as any).vibrationActuator;
+      if (!actuator) continue;
+      actuator.playEffect?.('dual-rumble', {
+        startDelay: 0, duration: 150,
+        weakMagnitude: 0,           // high-freq (right motor) — silent
+        strongMagnitude: intensity * 0.85, // low-freq (left motor)
+      })?.catch?.(() => {});
+    }
+
+    // Mobile vibration — pulse that gets longer and more frequent as enemy nears
+    this.vibrationTimer -= dt;
+    if (this.vibrationTimer <= 0) {
+      const pulse = Math.round(40 + intensity * 160);   // 40–200 ms
+      const gap   = Math.round(500 - intensity * 380);  // 500–120 ms
+      navigator.vibrate?.([pulse, gap]);
+      this.vibrationTimer = (pulse + gap) / 1000;
+    }
+  }
+
   private updateItemsHUD() {
     const fi = this.player.floorIndex;
     const has = this.collected[fi] ?? new Set();
@@ -949,6 +991,7 @@ if (caught && !caughtBy) {
     this.staminaFillEl.style.width = `${stam}%`;
     this.staminaFillEl.style.background =
       stam > 50 ? '#4f8' : stam > 25 ? '#fa4' : '#f44';
+    this.staminaIconEl.style.opacity = this.player.sprinting ? '1' : '0';
 
     this.updateItemsHUD();
     this.drawMinimap();
