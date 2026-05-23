@@ -556,20 +556,27 @@
       const root = document.getElementById('ui-root');
       function scaleUI() {
         const dpr = window.devicePixelRatio || 1;
-        const smallScreen = dpr >= 2 && Math.min(window.innerWidth, window.innerHeight) < 600;
+        // Prefer visualViewport (accurate on mobile Chrome 61+), then
+        // documentElement.clientWidth (always CSS px, reliable on older Android/MIUI
+        // where window.innerWidth can return physical pixels), then innerWidth.
+        const vvp = window.visualViewport;
+        const vw = (vvp && vvp.width)  || document.documentElement.clientWidth  || window.innerWidth;
+        const vh = (vvp && vvp.height) || document.documentElement.clientHeight || window.innerHeight;
+        const smallScreen = dpr >= 2 && Math.min(vw, vh) < 600;
         document.body.classList.toggle('small-screen', smallScreen);
         const UI_W = smallScreen ? 1280 : 1920;
         const UI_H = smallScreen ? 720  : 1080;
-        const scale = Math.min(window.innerWidth / UI_W, window.innerHeight / UI_H);
+        const scale = Math.min(vw / UI_W, vh / UI_H);
         // Expand to fill the unconstrained axis so the root covers the entire screen.
-        const actualW = window.innerWidth  / scale;
-        const actualH = window.innerHeight / scale;
+        const actualW = vw / scale;
+        const actualH = vh / scale;
         root.style.width  = actualW + 'px';
         root.style.height = actualH + 'px';
         root.style.transform = `scale(${scale})`;
       }
       scaleUI();
       window.addEventListener('resize', scaleUI);
+      if (window.visualViewport) window.visualViewport.addEventListener('resize', scaleUI);
     })();
 
     document.fonts.ready.then(function () {
