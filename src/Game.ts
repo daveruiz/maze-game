@@ -2,6 +2,7 @@ import * as THREE from 'three';
 import { EffectComposer } from 'three/examples/jsm/postprocessing/EffectComposer.js';
 import { RenderPass } from 'three/examples/jsm/postprocessing/RenderPass.js';
 import { ShaderPass } from 'three/examples/jsm/postprocessing/ShaderPass.js';
+import { SSAOPass } from 'three/examples/jsm/postprocessing/SSAOPass.js';
 import { MazeGenerator, MazeRenderer, WALL_HEIGHT, CELL_SIZE } from './Maze';
 import { Player } from './Player';
 import { Enemy } from './Enemy';
@@ -35,6 +36,7 @@ export class Game {
   private lights:   THREE.Light[] = [];
   private composer!:    EffectComposer;
   private horrorPass!:  ShaderPass;
+  private ssaoPass!:    SSAOPass;
   private clock = new THREE.Clock();
   private running = false;
   private raf = 0;
@@ -162,7 +164,14 @@ export class Game {
 
     // Post-processing
     this.composer = new EffectComposer(this.renderer);
-    this.composer.addPass(new RenderPass(this.scene, this.camera));
+    // SSAOPass renders the scene internally — no separate RenderPass needed.
+    // When ambientOcclusion is disabled we switch its output to Beauty (scene only).
+    this.ssaoPass = new SSAOPass(this.scene, this.camera, window.innerWidth, window.innerHeight);
+    this.ssaoPass.kernelRadius = 5;
+    this.ssaoPass.minDistance  = 0.002;
+    this.ssaoPass.maxDistance  = 0.18;
+    (this.ssaoPass as any).kernelSize = 16; // fewer samples for perf
+    this.composer.addPass(this.ssaoPass);
     this.horrorPass = new ShaderPass(HorrorShader);
     this.composer.addPass(this.horrorPass);
 
@@ -994,6 +1003,11 @@ if (caught && !caughtBy) {
     // Posterize
     this.horrorPass.uniforms['posterLevels'].value = s.get('posterize') ? 12.0 : 256.0;
 
+    // Ambient occlusion — toggle between full AO output and beauty (scene only)
+    (this.ssaoPass as any).output = s.get('ambientOcclusion')
+      ? (SSAOPass as any).OUTPUT.Default
+      : (SSAOPass as any).OUTPUT.Beauty;
+
     // Vibration
     this.vibrationEnabled = s.get('vibration');
 
@@ -1571,5 +1585,6 @@ if (caught && !caughtBy) {
     this.camera.updateProjectionMatrix();
     this.renderer.setSize(window.innerWidth, window.innerHeight);
     this.composer.setSize(window.innerWidth, window.innerHeight);
+    this.ssaoPass.setSize(window.innerWidth, window.innerHeight);
   }
 }

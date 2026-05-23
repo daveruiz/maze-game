@@ -2,6 +2,7 @@ export interface SettingsData {
   pixelScale:      number;   // renderer divisor: 1=native, 2=half, 4=quarter, 8=eighth
   shadows:         boolean;
   posterize:       boolean;
+  ambientOcclusion: boolean;
   vibration:       boolean;
   micInput:        boolean;
   micReverbVolume: number;   // 0=off, 0..1 reverb feedback level
@@ -15,12 +16,13 @@ export interface SettingsData {
 }
 
 const DEFAULTS: SettingsData = {
-  pixelScale:      4,
-  shadows:         true,
-  posterize:       true,
-  vibration:       false,
-  micInput:        false,
-  micReverbVolume: 0.8,
+  pixelScale:       4,
+  shadows:          true,
+  posterize:        true,
+  ambientOcclusion: true,
+  vibration:        false,
+  micInput:         false,
+  micReverbVolume:  0.5,
   mobileScale:      1.0,
   mobileBtnJumpX:   91,  mobileBtnJumpY:   33,
   mobileBtnCrouchX: 91,  mobileBtnCrouchY: 53,

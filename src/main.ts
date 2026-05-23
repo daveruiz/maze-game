@@ -164,10 +164,17 @@ const GP_RIGHT = 15;
 // Previous button state for edge detection
 const gpPrev = { a: false, b: false, start: false };
 
-// Navigation state
+// Navigation state — options menu
 let gpNavCooldown = 0;
 let gpMenuFocusIdx = -1;
 let gpMenuItems: HTMLElement[] = [];
+
+// Navigation state — overlay (home / death screen)
+const gpOverlayBtns = () => [
+  document.getElementById('start-btn'),
+  document.getElementById('options-btn'),
+].filter(Boolean) as HTMLElement[];
+let gpOverlayFocusIdx = -1;
 
 function gpGetMenuItems(): HTMLElement[] {
   const menu = document.getElementById('options-menu');
@@ -237,10 +244,41 @@ function pollGamepadForMenu() {
 
   // ── Overlay (home / death screen) ──────────────────────────────────
   if (overlay.style.display !== 'none') {
-    if ((btnA || btnStart) && !(gpPrev.a || gpPrev.start)) startBtn.click();
+    const items = gpOverlayBtns();
+
+    // Auto-focus the start button when overlay is visible
+    if (gpOverlayFocusIdx < 0 && items.length > 0) {
+      gpOverlayFocusIdx = 0;
+      items[0].classList.add('gp-focus');
+    }
+
+    if (gpNavCooldown > 0) gpNavCooldown--;
+
+    // Left/right navigates between the two buttons
+    const horizDir = navRight ? 1 : (navLeft ? -1 : 0);
+    if (horizDir !== 0 && gpNavCooldown === 0) {
+      items[gpOverlayFocusIdx]?.classList.remove('gp-focus');
+      gpOverlayFocusIdx = Math.max(0, Math.min(items.length - 1, gpOverlayFocusIdx + horizDir));
+      items[gpOverlayFocusIdx]?.classList.add('gp-focus');
+      gpNavCooldown = 12;
+    }
+
+    // A confirms focused button; Start always starts
+    if (btnA && !gpPrev.a) {
+      items[gpOverlayFocusIdx]?.click();
+    } else if (btnStart && !gpPrev.start) {
+      startBtn.click();
+    }
+
     gpPrev.a = btnA; gpPrev.b = btnB; gpPrev.start = btnStart;
-    if (gpMenuFocusIdx >= 0) gpClearMenuFocus(); // reset nav when overlay opens
+    if (gpMenuFocusIdx >= 0) gpClearMenuFocus();
     return;
+  }
+
+  // Clear overlay focus when overlay is hidden
+  if (gpOverlayFocusIdx >= 0) {
+    gpOverlayBtns()[gpOverlayFocusIdx]?.classList.remove('gp-focus');
+    gpOverlayFocusIdx = -1;
   }
 
   const menuOpen = (window as any).optionsMenu?.isOpen?.() ?? false;

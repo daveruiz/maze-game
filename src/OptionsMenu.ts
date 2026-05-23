@@ -45,12 +45,14 @@ export function initOptionsMenu() {
   const micReverbVol   = document.getElementById('mic-reverb-vol')  as HTMLInputElement;
   const shadowsCb      = document.getElementById('opt-shadows')     as HTMLInputElement;
   const posterizeCb    = document.getElementById('opt-posterize')   as HTMLInputElement;
+  const aoCb           = document.getElementById('opt-ao')          as HTMLInputElement;
 
   vibCb.checked       = settings.get('vibration');
   micCb.checked       = settings.get('micInput');
   micReverbVol.value  = String(Math.round(settings.get('micReverbVolume') * 100));
   shadowsCb.checked   = settings.get('shadows');
   posterizeCb.checked = settings.get('posterize');
+  aoCb.checked        = settings.get('ambientOcclusion');
 
   // Reverb slider depends on mic being enabled
   function syncMicReverb() {
@@ -75,6 +77,7 @@ export function initOptionsMenu() {
   micReverbVol.addEventListener('input', () => settings.set('micReverbVolume', parseInt(micReverbVol.value) / 100));
   shadowsCb.addEventListener('change',   () => settings.set('shadows',   shadowsCb.checked));
   posterizeCb.addEventListener('change', () => settings.set('posterize', posterizeCb.checked));
+  aoCb.addEventListener('change',        () => settings.set('ambientOcclusion', aoCb.checked));
 
   // Mobile layout section — shown only on touch devices
   if ('ontouchstart' in window) {

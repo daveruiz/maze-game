@@ -42,11 +42,6 @@ const PATH_UPDATE_INTERVAL = 0.5; // seconds
 // Separation — enemies prefer patrol targets far from siblings
 const SEPARATION_RADIUS  = 12;  // world units — penalise targets near siblings
 
-// Stuck detection — threshold scales with patrol speed so a slow enemy isn't
-// falsely flagged just because it covers less ground between checks.
-const STUCK_CHECK_INTERVAL = 2.5; // seconds (longer window gives slow patrol more room)
-const STUCK_DISTANCE       = BASE_SEARCH_SPEED * STUCK_CHECK_INTERVAL * 0.35; // ~30% of expected travel
-
 // Investigation after losing sight
 const INVESTIGATE_DURATION = 4.0; // seconds to investigate area after losing player
 const INVESTIGATE_RADIUS   = 8;   // pick cells within this radius of last known pos
@@ -94,10 +89,6 @@ export class Enemy {
   private investigateTimer = 0;
   private investigateTarget: THREE.Vector3 | null = null;
   private investigateWaiting = false; // true while standing still waiting for suspicion to decay
-
-  // Stuck detection
-  private stuckCheckTimer = 0;
-  private stuckCheckPos: THREE.Vector3 = new THREE.Vector3();
 
   // Patrol zone — each enemy is assigned a zone index for spatial distribution
   private patrolZone = 0;
@@ -475,7 +466,6 @@ export class Enemy {
     this.pos.copy(wp);
     this.pos.y += 1.28;
     this.mesh.position.set(this.pos.x, this.pos.y - 1.28, this.pos.z);
-    this.stuckCheckPos.copy(this.pos);
     this.soundVirtualPos.copy(this.pos);
     this.smoothSoundPos.copy(this.pos);
     this.soundHasLOS = true;
@@ -533,38 +523,6 @@ export class Enemy {
     const speedMult = 1 + this.floorIndex * SPEED_SCALE_PER_FLOOR;
 
     this.pathTimer += dt;
-
-    // Stuck detection — covers searching + investigating (not chasing)
-    this.stuckCheckTimer += dt;
-    if (this.stuckCheckTimer >= STUCK_CHECK_INTERVAL) {
-      const movedDist = this.pos.distanceTo(this.stuckCheckPos);
-      if (movedDist < STUCK_DISTANCE && this.state !== EnemyState.CHASING && !this.investigateWaiting) {
-        // Snap to nearest valid reachable cell first (may be stuck in a wall)
-        this.snapToNearestReachable();
-        // Then force a new path to a far-away reachable cell
-        const cells = this.reachableCells.filter(c => !c.hasObstacle);
-        if (cells.length > 0) {
-          const myCell = this.maze.worldToCell(this.pos.x, this.pos.z, this.floorIndex);
-          // Pick a cell far from current position
-          let bestDist = -1;
-          let bestPick = cells[0];
-          for (let i = 0; i < Math.min(cells.length, 40); i++) {
-            const c = cells[Math.floor(Math.random() * cells.length)];
-            const d = Math.abs(c.x - myCell.x) + Math.abs(c.z - myCell.z);
-            if (d > bestDist) { bestDist = d; bestPick = c; }
-          }
-          const wp = this.maze.cellToWorld(bestPick.x, bestPick.z, this.floorIndex);
-          wp.y = this.pos.y;
-          this.searchTarget = wp;
-          this.path = this.smoothPath(this.bfsPath(this.pos, wp));
-          this.searchTimer = 12;
-          this.investigateTimer = 0; // cancel investigation if stuck
-          this.investigateWaiting = false;
-        }
-      }
-      this.stuckCheckPos.copy(this.pos);
-      this.stuckCheckTimer = 0;
-    }
 
     // Separation is handled at target-selection level (pickPatrolTarget scores
     // cells far from siblings). No runtime movement force — avoids pushing into walls.
@@ -689,8 +647,6 @@ export class Enemy {
           if (this.investigateWaiting && this.suspicion < 0.05) {
             this.investigateWaiting = false;
             this.investigateTimer = 0;
-            this.stuckCheckPos.copy(this.pos);
-            this.stuckCheckTimer = 0;
           }
           this.doInvestigate(dt, speedMult);
         } else {
@@ -724,9 +680,6 @@ export class Enemy {
           const walkDist = this.pathWalkDistance(this.path);
           const travelTime = walkDist / (BASE_CHASE_SPEED * 0.7 * speedMult);
           this.investigateTimer = travelTime + INVESTIGATE_DURATION;
-          // Reset stuck timer so it doesn't immediately snap us away
-          this.stuckCheckTimer = 0;
-          this.stuckCheckPos.copy(this.pos);
           break;
         }
 
