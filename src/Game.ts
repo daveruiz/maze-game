@@ -114,6 +114,10 @@ export class Game {
   private vibrationEnabled = false;
   private vibrationTimer   = 0;
 
+  // Microphone
+  private micEnabled       = false;
+  private micReverbEnabled = false;
+
   // Unified player visibility (0=dark/hidden, 1=fully lit) — computed each frame
   private playerVisibility = 0;
 
@@ -335,6 +339,17 @@ export class Game {
     const vibCb = document.getElementById('vibration-cb') as HTMLInputElement | null;
     this.vibrationEnabled = vibCb?.checked ?? false;
 
+    // Read mic preferences and request permission if needed
+    const micCb      = document.getElementById('mic-cb')        as HTMLInputElement | null;
+    const micRevCb   = document.getElementById('mic-reverb-cb') as HTMLInputElement | null;
+    this.micEnabled       = micCb?.checked ?? false;
+    this.micReverbEnabled = micRevCb?.checked ?? false;
+    if (this.micEnabled) {
+      this.setupMicrophone();
+    } else {
+      this.audio.disconnectMicrophone();
+    }
+
     this.running = true;
     this.clock.start();
     this.loop();
@@ -555,6 +570,12 @@ export class Game {
 
     // Decay player audibility from last frame
     this.audio.tickAudibility(dt);
+
+    // Mic input → player noise (feeds enemy detection directly)
+    if (this.micEnabled) {
+      const micLevel = this.audio.getMicLevel();
+      if (micLevel > 0.05) this.audio.reportPlayerSound(micLevel);
+    }
 
     // Debug: infinite flashlight + stamina
     if (this.debugInfiniteResources) {
@@ -930,6 +951,18 @@ if (caught && !caughtBy) {
       const gap   = Math.round(500 - intensity * 380);  // 500–120 ms
       navigator.vibrate?.([pulse, gap]);
       this.vibrationTimer = (pulse + gap) / 1000;
+    }
+  }
+
+  private async setupMicrophone() {
+    try {
+      const stream = await navigator.mediaDevices.getUserMedia({ audio: true, video: false });
+      this.audio.connectMicrophone(stream, this.micReverbEnabled);
+    } catch {
+      // Permission denied or mic unavailable — silently disable
+      this.micEnabled = false;
+      const cb = document.getElementById('mic-cb') as HTMLInputElement | null;
+      if (cb) cb.checked = false;
     }
   }
 

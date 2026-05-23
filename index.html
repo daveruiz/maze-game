@@ -326,22 +326,37 @@
       transition: background 0.2s;
     }
     #start-btn:hover { background: #f0d080; }
-    #vibration-label {
-      position: relative;
+    #overlay-options {
+      position: absolute;
+      bottom: 40px;
+      left: 50%;
+      transform: translateX(-50%);
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      gap: 12px;
       z-index: 1;
-      margin-top: 20px;
+    }
+    #overlay-options label {
       display: flex;
       align-items: center;
-      gap: 8px;
+      gap: 10px;
       color: #555;
-      font-size: 1.2rem;
+      font-size: 1.8rem;
       letter-spacing: 2px;
       text-transform: uppercase;
       cursor: pointer;
       user-select: none;
+      white-space: nowrap;
     }
-    #vibration-label:hover { color: #888; }
-    #vibration-label input { accent-color: #e8c56d; width: 14px; height: 14px; cursor: pointer; }
+    #overlay-options label:hover { color: #888; }
+    #overlay-options label.disabled { opacity: 0.35; pointer-events: none; }
+    #overlay-options input[type="checkbox"] {
+      accent-color: #e8c56d;
+      width: 18px; height: 18px;
+      cursor: pointer;
+      flex-shrink: 0;
+    }
   </style>
 </head>
 <body>
@@ -437,9 +452,17 @@
           LEFT STICK — Move &nbsp;|&nbsp; RIGHT STICK — Look &nbsp;|&nbsp; A — Jump &nbsp;|&nbsp; B — Crouch &nbsp;|&nbsp; X — Flashlight &nbsp;|&nbsp; L3 — Sprint
         </div>
         <button id="start-btn">ENTER</button>
-        <label id="vibration-label" style="display:none">
-          <input type="checkbox" id="vibration-cb"> Vibration
-        </label>
+        <div id="overlay-options">
+          <label id="vibration-label" style="display:none">
+            <input type="checkbox" id="vibration-cb"> Vibration
+          </label>
+          <label id="mic-label">
+            <input type="checkbox" id="mic-cb"> Microphone input
+          </label>
+          <label id="mic-reverb-label" class="disabled">
+            <input type="checkbox" id="mic-reverb-cb"> Voice reverb
+          </label>
+        </div>
       </div>
 
     </div><!-- /ui-root -->
@@ -451,8 +474,21 @@
         document.getElementById('vibration-label').style.display = 'flex';
       }
       window.addEventListener('gamepadconnected', function(e) {
-        if ((e.gamepad).vibrationActuator) {
+        if (e.gamepad.vibrationActuator) {
           document.getElementById('vibration-label').style.display = 'flex';
+        }
+      });
+
+      // Mic reverb depends on mic being enabled
+      const micCb = document.getElementById('mic-cb');
+      const micReverbLabel = document.getElementById('mic-reverb-label');
+      const micReverbCb = document.getElementById('mic-reverb-cb');
+      micCb.addEventListener('change', function() {
+        if (micCb.checked) {
+          micReverbLabel.classList.remove('disabled');
+        } else {
+          micReverbLabel.classList.add('disabled');
+          micReverbCb.checked = false;
         }
       });
 

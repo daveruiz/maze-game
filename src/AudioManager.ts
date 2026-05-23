@@ -436,6 +436,12 @@ export class AudioManager {
   private channels: Map<number, EnemyChannel> = new Map();
   private nextChannelId = 0;
 
+  // Microphone input
+  private micStream:   MediaStream | null = null;
+  private micSource:   MediaStreamAudioSourceNode | null = null;
+  private micAnalyser: AnalyserNode | null = null;
+  private micAnalyserBuf: Uint8Array<ArrayBuffer> = new Uint8Array(0);
+
   // Floor ambience — multiple spatialized sources per floor
   private ambienceSources: AudioBufferSourceNode[] = [];
   private currentAmbienceFloor = -1;
@@ -692,6 +698,68 @@ export class AudioManager {
   }
 
   get playerAudibility(): number { return this._playerAudibility; }
+
+  // ── Microphone input ───────────────────────────────────────────────────
+
+  connectMicrophone(stream: MediaStream, enableReverb: boolean) {
+    this.disconnectMicrophone();
+    if (!this.ctx) return;
+
+    this.micStream = stream;
+    this.micSource = this.ctx.createMediaStreamSource(stream);
+
+    // Analyser for level metering
+    this.micAnalyser = this.ctx.createAnalyser();
+    this.micAnalyser.fftSize = 512;
+    this.micAnalyser.smoothingTimeConstant = 0.4;
+    this.micAnalyserBuf = new Uint8Array(this.micAnalyser.fftSize);
+    this.micSource.connect(this.micAnalyser);
+
+    if (enableReverb) {
+      // Reverb-only feedback: dry=0, wet=max
+      // Mono downmix before convolver (same reason as master reverb)
+      const monoGain = this.ctx.createGain();
+      monoGain.channelCount = 1;
+      monoGain.channelCountMode = 'explicit';
+
+      const convolver = this.ctx.createConvolver();
+      convolver.buffer = this.generateImpulseResponse(1.6, 5.0);
+
+      const wetGain = this.ctx.createGain();
+      wetGain.gain.value = 1.8; // full wet, boosted
+
+      const compressor = this.ctx.createDynamicsCompressor();
+      compressor.threshold.value = -18;
+      compressor.knee.value = 8;
+      compressor.ratio.value = 4;
+
+      this.micSource.connect(monoGain)
+        .connect(convolver)
+        .connect(wetGain)
+        .connect(compressor)
+        .connect(this.ctx.destination);
+    }
+  }
+
+  disconnectMicrophone() {
+    this.micSource?.disconnect();
+    this.micSource = null;
+    this.micAnalyser = null;
+    this.micStream?.getTracks().forEach(t => t.stop());
+    this.micStream = null;
+  }
+
+  /** RMS level of mic input, mapped to roughly 0..1. Call once per frame. */
+  getMicLevel(): number {
+    if (!this.micAnalyser) return 0;
+    this.micAnalyser.getByteTimeDomainData(this.micAnalyserBuf);
+    let sumSq = 0;
+    for (const s of this.micAnalyserBuf) {
+      const v = (s - 128) / 128;
+      sumSq += v * v;
+    }
+    return Math.min(1, Math.sqrt(sumSq / this.micAnalyserBuf.length) * 6);
+  }
 
   // ── Footsteps ──────────────────────────────────────────────────────────
 
