@@ -164,13 +164,15 @@ export class Game {
 
     // Post-processing
     this.composer = new EffectComposer(this.renderer);
-    // SSAOPass renders the scene internally — no separate RenderPass needed.
-    // When ambientOcclusion is disabled we switch its output to Beauty (scene only).
+    // RenderPass always renders the scene — SSAO is layered on top when enabled
+    const renderPass = new RenderPass(this.scene, this.camera);
+    this.composer.addPass(renderPass);
     this.ssaoPass = new SSAOPass(this.scene, this.camera, window.innerWidth, window.innerHeight);
     this.ssaoPass.kernelRadius = 5;
     this.ssaoPass.minDistance  = 0.002;
     this.ssaoPass.maxDistance  = 0.18;
     (this.ssaoPass as any).kernelSize = 16; // fewer samples for perf
+    this.ssaoPass.enabled = settings.get('ambientOcclusion');
     this.composer.addPass(this.ssaoPass);
     this.horrorPass = new ShaderPass(HorrorShader);
     this.composer.addPass(this.horrorPass);
@@ -549,18 +551,36 @@ export class Game {
           // Hit flinch at ~1.2s: enemy strikes the player, camera jerks away
           if (this.deathTimer >= 1.2) {
             this.deathHitApplied = true;
-            this.deathYaw += 0.6;
-            this.deathPitch -= 0.35;
+            // Dramatic turn to the right from the blow
+            this.deathYaw += 1.4;
+            this.deathPitch -= 0.2;
           }
         }
-        // After hit: no tracking — camera stays where the blow sent it
+
+        // After hit: camera falls to the ground + continues turning
+        if (this.deathHitApplied) {
+          const fallT = Math.min(1, (this.deathTimer - 1.2) / 0.8); // 0→1 over 0.8s after hit
+          const fallEased = fallT * fallT; // ease-in: slow start, fast end (gravity feel)
+          // Drop camera to ground level
+          const fallDrop = fallEased * (this.deathStartPos.y - 0.15); // fall to near floor
+          this.camera.position.y = this.deathStartPos.y - sinkY - fallDrop + shakeY;
+          // Continue turning as player collapses (slower drift)
+          this.deathYaw += 0.8 * dt;
+          // Tilt sideways as if falling
+          this.deathPitch -= 0.5 * dt;
+        }
 
         // Add shake to rotation too — intensify briefly after hit
-        const hitShake = (this.deathHitApplied && this.deathTimer < 1.4) ? 0.06 : 0;
+        const hitShake = (this.deathHitApplied && this.deathTimer < 1.6) ? 0.08 : 0;
         const rotShake = shakeIntensity * 0.02 + hitShake;
         this.camera.rotation.order = 'YXZ';
         this.camera.rotation.y = this.deathYaw + Math.sin(this.deathTimer * 31) * rotShake;
         this.camera.rotation.x = this.deathPitch + Math.cos(this.deathTimer * 43) * rotShake;
+        // Roll the camera as player falls (tilt head sideways)
+        if (this.deathHitApplied) {
+          const fallT = Math.min(1, (this.deathTimer - 1.2) / 0.8);
+          this.camera.rotation.z = fallT * 0.4; // subtle roll
+        }
       }
 
       // Phase 1 (0–2.5s): FOV narrows 75 → 45
@@ -1003,10 +1023,8 @@ if (caught && !caughtBy) {
     // Posterize
     this.horrorPass.uniforms['posterLevels'].value = s.get('posterize') ? 12.0 : 256.0;
 
-    // Ambient occlusion — toggle between full AO output and beauty (scene only)
-    (this.ssaoPass as any).output = s.get('ambientOcclusion')
-      ? (SSAOPass as any).OUTPUT.Default
-      : (SSAOPass as any).OUTPUT.Beauty;
+    // Ambient occlusion — enable/disable the pass entirely
+    this.ssaoPass.enabled = s.get('ambientOcclusion');
 
     // Vibration
     this.vibrationEnabled = s.get('vibration');

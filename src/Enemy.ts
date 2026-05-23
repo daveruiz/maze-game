@@ -203,6 +203,7 @@ export class Enemy {
       model.traverse(child => {
         if (child instanceof THREE.Mesh || child instanceof THREE.SkinnedMesh) {
           child.castShadow = true;
+          child.receiveShadow = true;
           // Clone the material so each enemy instance is independent.
           const mats = Array.isArray(child.material) ? child.material : [child.material];
           const cloned = mats.map(m => {

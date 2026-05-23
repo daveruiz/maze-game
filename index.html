@@ -15,7 +15,7 @@
   <link href="https://fonts.googleapis.com/css2?family=Barriecito&display=swap" rel="stylesheet">
   <title>Dad's Nightmare</title>
   <style>
-    * { margin: 0; padding: 0; box-sizing: border-box; }
+    * { margin: 0; padding: 0; box-sizing: border-box; -webkit-user-select: none; user-select: none; }
     body {
       background: #000;
       overflow: hidden;
@@ -371,7 +371,7 @@
       transition: background 0.2s;
     }
     #start-btn:hover,
-    #start-btn.gp-focus { background: #f0d080; }
+    #start-btn.gp-focus { background: #f0d080; outline: 2px solid #e8c56d; outline-offset: 3px; }
     #options-btn.gp-focus { outline: 2px solid #e8c56d; outline-offset: 3px; }
     .popup-menu .configure-btn {
       width: 100%; padding: 8px; margin-top: 4px;

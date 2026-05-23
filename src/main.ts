@@ -242,8 +242,10 @@ function pollGamepadForMenu() {
     if (lx >  0.5) navRight = true;
   }
 
-  // ── Overlay (home / death screen) ──────────────────────────────────
-  if (overlay.style.display !== 'none') {
+  const menuOpen = (window as any).optionsMenu?.isOpen?.() ?? false;
+
+  // ── Overlay (home / death screen) — but NOT when options menu is on top ─
+  if (overlay.style.display !== 'none' && !menuOpen) {
     const items = gpOverlayBtns();
 
     // Auto-focus the start button when overlay is visible
@@ -260,7 +262,7 @@ function pollGamepadForMenu() {
       items[gpOverlayFocusIdx]?.classList.remove('gp-focus');
       gpOverlayFocusIdx = Math.max(0, Math.min(items.length - 1, gpOverlayFocusIdx + horizDir));
       items[gpOverlayFocusIdx]?.classList.add('gp-focus');
-      gpNavCooldown = 12;
+      gpNavCooldown = 30; // ~500 ms at 60 fps
     }
 
     // A confirms focused button; Start always starts
@@ -275,13 +277,11 @@ function pollGamepadForMenu() {
     return;
   }
 
-  // Clear overlay focus when overlay is hidden
-  if (gpOverlayFocusIdx >= 0) {
+  // Clear overlay focus when overlay is hidden or options menu opened on top
+  if (gpOverlayFocusIdx >= 0 && (overlay.style.display === 'none' || menuOpen)) {
     gpOverlayBtns()[gpOverlayFocusIdx]?.classList.remove('gp-focus');
     gpOverlayFocusIdx = -1;
   }
-
-  const menuOpen = (window as any).optionsMenu?.isOpen?.() ?? false;
 
   // ── Options menu navigation ─────────────────────────────────────────
   if (menuOpen) {
@@ -298,7 +298,7 @@ function pollGamepadForMenu() {
     const vertDir = navDown ? 1 : (navUp ? -1 : 0);
     if (vertDir !== 0 && gpNavCooldown === 0) {
       gpSetMenuFocus(items, gpMenuFocusIdx + vertDir);
-      gpNavCooldown = 12; // ~200 ms repeat at 60 fps
+      gpNavCooldown = 30; // ~500 ms at 60 fps // ~200 ms repeat at 60 fps
     }
 
     // Horizontal navigation adjusts range sliders
