@@ -226,6 +226,19 @@
       border-top: 1px solid rgba(255,255,255,0.1);
       padding-top: 8px;
     }
+    /* 2× size on small/mobile screens to compensate for heavy UI scaling */
+    .small-screen .popup-menu {
+      font-size: 26px;
+      min-width: 480px;
+      padding: 36px 48px;
+    }
+    .small-screen .popup-menu h2      { font-size: 28px; padding-bottom: 16px; margin-bottom: 28px; }
+    .small-screen .popup-menu .section-label { font-size: 20px; margin: 24px 0 12px; }
+    .small-screen .popup-menu .hint   { font-size: 20px; margin-top: 28px; padding-top: 16px; }
+    .small-screen .popup-menu label   { padding: 8px 0; gap: 16px; }
+    .small-screen .popup-menu input[type="checkbox"] { width: 28px; height: 28px; }
+    .small-screen .popup-menu .floor-btns { gap: 12px; }
+    .small-screen .popup-menu .floor-btns button { font-size: 24px; padding: 12px 0; }
 
     /* ── Shared HUD bar (battery + suspicion rows) ── */
     .hud-bar {
@@ -419,13 +432,6 @@
           <label><input type="checkbox" id="dbg-soundfield"> Sound field heatmap</label>
           <label><input type="checkbox" id="dbg-nodetection"> Disable enemy detection</label>
           <label><input type="checkbox" id="dbg-infiniteresources"> Infinite flashlight + stamina</label>
-          <div class="section-label">Resolution</div>
-          <div class="floor-btns">
-            <button data-pixelscale="1">1×</button>
-            <button data-pixelscale="2">2×</button>
-            <button data-pixelscale="4" class="active">4×</button>
-            <button data-pixelscale="8">8×</button>
-          </div>
           <div class="hint">Press ` to close</div>
         </div>
       </div>
@@ -451,6 +457,13 @@
           <label id="mic-reverb-label" class="disabled">
             <input type="checkbox" id="mic-reverb-cb"> Voice reverb
           </label>
+          <div class="section-label">Resolution</div>
+          <div class="floor-btns">
+            <button data-pixelscale="1">1×</button>
+            <button data-pixelscale="2">2×</button>
+            <button data-pixelscale="4" class="active">4×</button>
+            <button data-pixelscale="8">8×</button>
+          </div>
           <div class="hint">Click outside to close</div>
         </div>
         <div class="overlay-btn-row">
@@ -529,6 +542,7 @@
       function scaleUI() {
         const dpr = window.devicePixelRatio || 1;
         const smallScreen = dpr >= 2 && Math.min(window.innerWidth, window.innerHeight) < 600;
+        document.body.classList.toggle('small-screen', smallScreen);
         const UI_W = smallScreen ? 1280 : 1920;
         const UI_H = smallScreen ? 720  : 1080;
         const scale = Math.min(window.innerWidth / UI_W, window.innerHeight / UI_H);

@@ -1370,15 +1370,14 @@ if (caught && !caughtBy) {
       this.debugInfiniteResources = irCb.checked;
     });
 
-    // Pixel scale buttons (resolution downscale for performance)
+    // Pixel scale buttons — live in the options menu, wired once here
     const baseDPR = Math.min(window.devicePixelRatio, 2);
-    menu.querySelectorAll<HTMLButtonElement>('button[data-pixelscale]').forEach(btn => {
+    document.querySelectorAll<HTMLButtonElement>('button[data-pixelscale]').forEach(btn => {
       btn.addEventListener('click', () => {
         const scale = parseInt(btn.dataset.pixelscale ?? '1', 10);
         this.renderer.setPixelRatio(baseDPR / scale);
         this.renderer.setSize(window.innerWidth, window.innerHeight);
-        // Update active state
-        menu.querySelectorAll<HTMLButtonElement>('button[data-pixelscale]').forEach(b => b.classList.remove('active'));
+        document.querySelectorAll<HTMLButtonElement>('button[data-pixelscale]').forEach(b => b.classList.remove('active'));
         btn.classList.add('active');
       });
     });
