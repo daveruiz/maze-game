@@ -231,7 +231,7 @@ export class MobileControls {
         font-family: "Barriecito", system-ui;
         touch-action: none;
       }
-      #mobile-rotate-notice .rotate-icon { font-size: 3rem; margin-bottom: 16px; }
+      #mobile-rotate-notice .rotate-icon { font-size: 3rem; margin-bottom: 16px; filter: brightness(0) invert(1); }
       #mobile-rotate-notice .rotate-text {
         font-size: 1rem; color: #e8c56d;
         letter-spacing: 3px; text-transform: uppercase;
@@ -249,7 +249,7 @@ export class MobileControls {
         font-family: "Barriecito", system-ui;
         touch-action: none;
       }
-      #fullscreen-cta .cta-icon { font-size: 3rem; margin-bottom: 16px; }
+      #fullscreen-cta .cta-icon { font-size: 3rem; margin-bottom: 16px; filter: brightness(0) invert(1); }
       #fullscreen-cta .cta-text {
         font-size: 1.1rem; color: #e8c56d;
         letter-spacing: 3px; text-transform: uppercase;
@@ -416,7 +416,7 @@ export class MobileControls {
     const btn = document.createElement('button');
     btn.className = 'mobile-btn';
     btn.id = id;
-    btn.innerHTML = `<span style="font-size:18px;line-height:1">${icon}</span>`;
+    btn.innerHTML = `<span style="font-size:18px;line-height:1;filter:brightness(0) invert(1)">${icon}</span>`;
     btn.setAttribute('aria-label', label);
     return btn;
   }

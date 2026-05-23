@@ -241,6 +241,7 @@
       width: 1.6em;
       flex-shrink: 0;
       text-align: center;
+      filter: brightness(0) invert(1);
     }
     .hud-bar-track {
       width: 140px;
@@ -353,7 +354,7 @@
             </div>
           </div>
         </div>
-        <div id="battery-low" style="position:absolute;bottom:40%;left:50%;transform:translateX(-50%);font-size:1.7rem;color:#f44;letter-spacing:2px;font-weight:bold;text-shadow:0 0 10px #f44;opacity:0;transition:opacity 0.3s;pointer-events:none;">🔋 LOW BATTERY</div>
+        <div id="battery-low" style="position:absolute;bottom:40%;left:50%;transform:translateX(-50%);font-size:1.7rem;color:#f44;letter-spacing:2px;font-weight:bold;text-shadow:0 0 10px #f44;opacity:0;transition:opacity 0.3s;pointer-events:none;"><span style="filter:brightness(0) invert(1)">🔋</span> LOW BATTERY</div>
         <!-- Left HUD stack: items listed bottom-first (column-reverse anchors at bottom) -->
         <div id="left-hud" style="position:absolute;bottom:32px;left:58px;display:flex;flex-direction:column-reverse;gap:6px;align-items:flex-start;">
           <div id="battery-hud" class="hud-bar">
