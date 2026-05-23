@@ -117,7 +117,7 @@ export class Game {
 
   // Microphone
   private micEnabled       = false;
-  private micReverbEnabled = false;
+  private micReverbVolume = 0.8;
 
   // Settings live-update unsubscribe handle
   private _settingsUnsub: (() => void) | null = null;
@@ -220,11 +220,13 @@ export class Game {
       if (open) {
         if (this.running) { this.pausedByMenu = true; this.pauseGame(); }
         document.exitPointerLock();
+        this.mobileControls?.hide();
       } else {
         if (this.pausedByMenu) {
           this.pausedByMenu = false;
           this.resumeGame();
           if (!inputMode.isTouch) this.player?.requestLock();
+          else this.mobileControls?.show();
         }
       }
     });
@@ -991,12 +993,11 @@ if (caught && !caughtBy) {
     this.vibrationEnabled = s.get('vibration');
 
     // Microphone
-    const micOn  = s.get('micInput');
-    const revOn  = s.get('micReverb');
-    const micChanged  = micOn  !== this.micEnabled;
-    const revChanged  = revOn  !== this.micReverbEnabled;
-    this.micEnabled       = micOn;
-    this.micReverbEnabled = revOn;
+    const micOn      = s.get('micInput');
+    const reverbVol  = s.get('micReverbVolume');
+    const micChanged = micOn !== this.micEnabled;
+    this.micEnabled      = micOn;
+    this.micReverbVolume = reverbVol;
 
     if (micChanged) {
       if (micOn) {
@@ -1004,17 +1005,16 @@ if (caught && !caughtBy) {
       } else {
         this.audio.disconnectMicrophone();
       }
-    } else if (revChanged && micOn) {
-      // Reverb toggled while mic is connected — reconnect with new setting
-      this.audio.disconnectMicrophone();
-      this.setupMicrophone();
+    } else if (micOn) {
+      // Volume changed while mic is connected — adjust gain live, no reconnection needed
+      this.audio.setMicReverbVolume(reverbVol);
     }
   }
 
   private async setupMicrophone() {
     try {
       const stream = await navigator.mediaDevices.getUserMedia({ audio: true, video: false });
-      this.audio.connectMicrophone(stream, this.micReverbEnabled);
+      this.audio.connectMicrophone(stream, this.micReverbVolume);
     } catch {
       // Permission denied or mic unavailable — silently disable
       this.micEnabled = false;
@@ -1448,11 +1448,13 @@ if (caught && !caughtBy) {
       this.updateDebugFloorButtons();
       document.exitPointerLock();
       if (this.running) { this.pausedByMenu = true; this.pauseGame(); }
+      this.mobileControls?.hide();
     } else {
       if (this.pausedByMenu) {
         this.pausedByMenu = false;
         this.resumeGame();
         if (!inputMode.isTouch) this.player?.requestLock();
+        else this.mobileControls?.show();
       }
     }
   }

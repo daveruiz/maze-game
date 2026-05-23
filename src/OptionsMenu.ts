@@ -38,24 +38,22 @@ export function initOptionsMenu() {
   const vibCb          = document.getElementById('vibration-cb')    as HTMLInputElement;
   const micCb          = document.getElementById('mic-cb')          as HTMLInputElement;
   const micReverbLabel = document.getElementById('mic-reverb-label') as HTMLElement;
-  const micReverbCb    = document.getElementById('mic-reverb-cb')   as HTMLInputElement;
+  const micReverbVol   = document.getElementById('mic-reverb-vol')  as HTMLInputElement;
   const shadowsCb      = document.getElementById('opt-shadows')     as HTMLInputElement;
   const posterizeCb    = document.getElementById('opt-posterize')   as HTMLInputElement;
 
   vibCb.checked       = settings.get('vibration');
   micCb.checked       = settings.get('micInput');
-  micReverbCb.checked = settings.get('micReverb');
+  micReverbVol.value  = String(Math.round(settings.get('micReverbVolume') * 100));
   shadowsCb.checked   = settings.get('shadows');
   posterizeCb.checked = settings.get('posterize');
 
-  // Mic reverb depends on mic being enabled
+  // Reverb slider depends on mic being enabled
   function syncMicReverb() {
     if (micCb.checked) {
       micReverbLabel.classList.remove('disabled');
     } else {
       micReverbLabel.classList.add('disabled');
-      micReverbCb.checked = false;
-      settings.set('micReverb', false);
     }
   }
   syncMicReverb();
@@ -68,9 +66,9 @@ export function initOptionsMenu() {
   });
 
   // Wire change handlers — just persist to settings; Game applies live via onChange
-  vibCb.addEventListener('change',       () => settings.set('vibration', vibCb.checked));
-  micCb.addEventListener('change',       () => { settings.set('micInput', micCb.checked); syncMicReverb(); });
-  micReverbCb.addEventListener('change', () => settings.set('micReverb', micReverbCb.checked));
+  vibCb.addEventListener('change',      () => settings.set('vibration', vibCb.checked));
+  micCb.addEventListener('change',      () => { settings.set('micInput', micCb.checked); syncMicReverb(); });
+  micReverbVol.addEventListener('input', () => settings.set('micReverbVolume', parseInt(micReverbVol.value) / 100));
   shadowsCb.addEventListener('change',   () => settings.set('shadows',   shadowsCb.checked));
   posterizeCb.addEventListener('change', () => settings.set('posterize', posterizeCb.checked));
 }

@@ -1,19 +1,19 @@
 export interface SettingsData {
-  pixelScale: number;   // renderer divisor: 1=native, 2=half, 4=quarter, 8=eighth
-  shadows:    boolean;
-  posterize:  boolean;
-  vibration:  boolean;
-  micInput:   boolean;
-  micReverb:  boolean;
+  pixelScale:      number;   // renderer divisor: 1=native, 2=half, 4=quarter, 8=eighth
+  shadows:         boolean;
+  posterize:       boolean;
+  vibration:       boolean;
+  micInput:        boolean;
+  micReverbVolume: number;   // 0=off, 0..1 reverb feedback level
 }
 
 const DEFAULTS: SettingsData = {
-  pixelScale: 4,
-  shadows:    true,
-  posterize:  true,
-  vibration:  false,
-  micInput:   false,
-  micReverb:  false,
+  pixelScale:      4,
+  shadows:         true,
+  posterize:       true,
+  vibration:       false,
+  micInput:        false,
+  micReverbVolume: 0.8,
 };
 
 const KEY = 'dads-nightmare-settings';

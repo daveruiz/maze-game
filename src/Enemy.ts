@@ -596,10 +596,26 @@ export class Enemy {
       if (this.state === EnemyState.CHASING) this.state = EnemyState.SEARCHING;
     }
 
+    // ── Directional awareness factor ─────────────────────────────────────
+    // Front ±90° → factor 1.0. Fades linearly to 0 at ±85° from behind (170° total).
+    // The last ~10° directly behind is a blind spot. Applies to visual detection only.
+    // When the player is brightly lit (flashlight/lantern), light is visible from all
+    // directions so the factor is overridden by playerVisibility.
+    const FADE_DOT = Math.cos(170 * Math.PI / 180); // ≈ -0.985
+    const enemyFwd = new THREE.Vector3(Math.sin(this.mesh.rotation.y), 0, Math.cos(this.mesh.rotation.y));
+    const toPlayerXZ = new THREE.Vector3(playerPos.x - this.pos.x, 0, playerPos.z - this.pos.z);
+    const toPlayerLen = toPlayerXZ.length();
+    const dot = toPlayerLen > 0.01 ? enemyFwd.dot(toPlayerXZ) / toPlayerLen : 1;
+    // dot=1 → front, dot=0 → 90° side (full zone), dot≈-1 → behind (blind)
+    const dirFactor = Math.max(0, Math.min(1, (dot - FADE_DOT) / (0 - FADE_DOT)));
+    // Flashlight or bright lantern: emitted light reveals player from all angles
+    const effectiveDirFactor = Math.max(dirFactor, playerVisibility);
+
     // ── Suspicion update (only while searching — chasing uses its own FSM) ───
     if (this.detectionEnabled && this.state === EnemyState.SEARCHING) {
-      // Instant chase: direct sight at close range — no suspicion buildup needed
-      if (canSee && distToPlayer < INSTANT_CHASE_RANGE) {
+      // Instant chase: direct sight at close range — scaled by direction factor
+      // (sneaking behind a distracted enemy avoids the instant trigger)
+      if (canSee && distToPlayer < INSTANT_CHASE_RANGE * effectiveDirFactor) {
         this.suspicion = 1;
         this.state = EnemyState.CHASING;
         this.chaseLockTimer = 1.5;
@@ -611,16 +627,16 @@ export class Enemy {
       } else {
         let gain = 0;
         if (canSee) {
-          // Direct visual contact — fast build, min 30% floor even at range edge
+          // Direct visual contact — scaled by facing direction and visibility
           const distF = 0.3 + 0.7 * Math.max(0, 1 - distToPlayer / effectiveSight);
-          gain += SUSPICION_BUILD_DIRECT * playerVisibility * distF;
+          gain += SUSPICION_BUILD_DIRECT * playerVisibility * distF * effectiveDirFactor;
         } else if (inGlowOnly) {
-          // Peripheral awareness: player visible but outside direct sight — slower build
+          // Peripheral awareness: slower build, also direction-dependent
           const distF = Math.max(0, 1 - distToPlayer / glowRange);
-          gain += SUSPICION_BUILD_GLOW * playerVisibility * distF;
+          gain += SUSPICION_BUILD_GLOW * playerVisibility * distF * effectiveDirFactor;
         }
         if (canHear) {
-          // Sound: squared distance falloff — independent of light level
+          // Sound: direction-independent — enemy hears regardless of which way it faces
           const f = Math.max(0, 1 - distToPlayer / darkRange);
           gain += SUSPICION_BUILD_NOISE * playerNoise * f * f;
         }
