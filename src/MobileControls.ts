@@ -269,8 +269,8 @@ export class MobileControls {
     this.ctaOverlay.id = 'fullscreen-cta';
     this.ctaOverlay.innerHTML = `
       <div class="cta-icon">📱</div>
-      <div class="cta-text">Toca para pantalla completa</div>
-      <div class="cta-sub">Mejor experiencia en horizontal</div>
+      <div class="cta-text">Tap for fullscreen</div>
+      <div class="cta-sub">Best experience in landscape</div>
     `;
     this.ctaOverlay.style.display = 'none'; // hidden until game starts
     document.body.appendChild(this.ctaOverlay);
@@ -280,7 +280,7 @@ export class MobileControls {
     rotateNotice.id = 'mobile-rotate-notice';
     rotateNotice.innerHTML = `
       <div class="rotate-icon">🔄</div>
-      <div class="rotate-text">Gira tu dispositivo</div>
+      <div class="rotate-text">Rotate your device</div>
     `;
     document.body.appendChild(rotateNotice);
 

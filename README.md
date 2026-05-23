@@ -34,9 +34,9 @@ This is a personal project made for fun and learning. Navigate through three inc
 
 ### Floors
 
-- **Sótano** — tight recursive maze with obstacles
-- **La Casa** — a sprawling haunted house with rooms and corridors (2x size)
-- **El Pueblo** — a massive abandoned village with dead ends and narrow alleys (5x size)
+- **Basement** — tight recursive maze with obstacles
+- **The House** — a sprawling haunted house with rooms and corridors (2x size)
+- **The Village** — a massive abandoned village with dead ends and narrow alleys (5x size)
 
 ### Features
 
