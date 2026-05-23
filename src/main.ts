@@ -161,21 +161,30 @@ const onFullscreenChange = () => {
 document.addEventListener('fullscreenchange', onFullscreenChange);
 document.addEventListener('webkitfullscreenchange', onFullscreenChange);
 
-// Gamepad: poll for A or Start button press to click start/restart when overlay is visible
+// Gamepad: poll for buttons on menu screens and for in-game options toggle
 let gpPrevConfirm = false;
+let gpPrevStart   = false;
 function pollGamepadForMenu() {
   requestAnimationFrame(pollGamepadForMenu);
-  // Overlay is visible when display is '' (initial) or 'flex' (retry); 'none' = in-game
-  if (overlay.style.display === 'none') { gpPrevConfirm = false; return; }
 
   const gamepads = navigator.getGamepads?.() ?? [];
   let confirm = false;
+  let start   = false;
   for (const gp of gamepads) {
     if (!gp?.connected) continue;
-    // A button (index 0) or Start/Options button (index 9)
-    if (gp.buttons[0]?.pressed || gp.buttons[9]?.pressed) { confirm = true; break; }
+    if (gp.buttons[0]?.pressed || gp.buttons[9]?.pressed) confirm = true;
+    if (gp.buttons[9]?.pressed) start = true;
   }
-  if (confirm && !gpPrevConfirm) startBtn.click();
+
+  if (overlay.style.display !== 'none') {
+    // Home / death screen: A or Start clicks the action button
+    if (confirm && !gpPrevConfirm) startBtn.click();
+  } else {
+    // In-game: Start toggles options menu
+    if (start && !gpPrevStart) (window as any).optionsMenu?.toggle();
+  }
+
   gpPrevConfirm = confirm;
+  gpPrevStart   = start;
 }
 pollGamepadForMenu();

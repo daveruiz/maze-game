@@ -1,5 +1,26 @@
 import { settings } from './Settings';
 
+// ── Public API for open/close ─────────────────────────────────────────────
+// Exposed on window so inline scripts and external code can use it.
+export const optionsMenu = {
+  open() {
+    document.getElementById('options-menu')!.style.display = 'block';
+    document.dispatchEvent(new CustomEvent('optionsmenu', { detail: { open: true } }));
+  },
+  close() {
+    document.getElementById('options-menu')!.style.display = 'none';
+    document.dispatchEvent(new CustomEvent('optionsmenu', { detail: { open: false } }));
+  },
+  toggle() {
+    const el = document.getElementById('options-menu')!;
+    if (el.style.display === 'block') this.close(); else this.open();
+  },
+  isOpen() {
+    return document.getElementById('options-menu')?.style.display === 'block';
+  },
+};
+(window as any).optionsMenu = optionsMenu;
+
 export function initOptionsMenu() {
   // Resolution buttons — initialize active state from saved setting
   const savedScale = settings.get('pixelScale');

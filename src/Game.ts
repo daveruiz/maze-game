@@ -122,6 +122,9 @@ export class Game {
   // Settings live-update unsubscribe handle
   private _settingsUnsub: (() => void) | null = null;
 
+  // Whether the game was running when a menu opened (so we resume on close)
+  private pausedByMenu = false;
+
   // Unified player visibility (0=dark/hidden, 1=fully lit) — computed each frame
   private playerVisibility = 0;
 
@@ -205,6 +208,25 @@ export class Game {
       this.gamepad.onKeyboardInput();
       if (e.code === 'KeyF' && !e.repeat) this.toggleFlashlight();
       if (e.code === 'Backquote' && !e.repeat) this.toggleDebugMenu();
+      if (e.code === 'Escape' && !e.repeat) {
+        if (this.debugMenuOpen) this.toggleDebugMenu();
+        else (window as any).optionsMenu?.toggle();
+      }
+    });
+
+    // Pause/resume when options menu opens or closes
+    document.addEventListener('optionsmenu', (e: Event) => {
+      const open = (e as CustomEvent).detail.open as boolean;
+      if (open) {
+        if (this.running) { this.pausedByMenu = true; this.pauseGame(); }
+        document.exitPointerLock();
+      } else {
+        if (this.pausedByMenu) {
+          this.pausedByMenu = false;
+          this.resumeGame();
+          if (!inputMode.isTouch) this.player?.requestLock();
+        }
+      }
     });
     document.addEventListener('mousemove', () => {
       this.gamepad.onKeyboardInput();
@@ -1422,11 +1444,16 @@ if (caught && !caughtBy) {
     const menu = document.getElementById('debug-menu')!;
     menu.style.display = this.debugMenuOpen ? 'block' : 'none';
 
-    // Update active floor button highlight
     if (this.debugMenuOpen) {
       this.updateDebugFloorButtons();
-      // Release pointer lock so we can click the menu
       document.exitPointerLock();
+      if (this.running) { this.pausedByMenu = true; this.pauseGame(); }
+    } else {
+      if (this.pausedByMenu) {
+        this.pausedByMenu = false;
+        this.resumeGame();
+        if (!inputMode.isTouch) this.player?.requestLock();
+      }
     }
   }
 
@@ -1450,7 +1477,9 @@ if (caught && !caughtBy) {
     this.updateDebugFloorButtons();
     // Close debug menu and re-lock pointer
     this.debugMenuOpen = false;
+    this.pausedByMenu = false;
     document.getElementById('debug-menu')!.style.display = 'none';
+    this.resumeGame();
     this.player.requestLock();
   }
 

@@ -436,6 +436,35 @@
         </div>
       </div>
 
+      <div id="options-menu" class="popup-menu">
+        <h2>Options</h2>
+        <label id="vibration-label" style="display:none">
+          <input type="checkbox" id="vibration-cb"> Vibration
+        </label>
+        <div class="section-label">Sound</div>
+        <label id="mic-label">
+          <input type="checkbox" id="mic-cb"> Microphone input
+        </label>
+        <label id="mic-reverb-label" class="disabled">
+          <input type="checkbox" id="mic-reverb-cb"> Voice reverb
+        </label>
+        <div class="section-label">Graphics</div>
+        <label>
+          <input type="checkbox" id="opt-shadows" checked> Shadows
+        </label>
+        <label>
+          <input type="checkbox" id="opt-posterize" checked> Posterize effect
+        </label>
+        <div class="section-label">Resolution</div>
+        <div class="floor-btns">
+          <button data-pixelscale="1">1×</button>
+          <button data-pixelscale="2">2×</button>
+          <button data-pixelscale="4" class="active">4×</button>
+          <button data-pixelscale="8">8×</button>
+        </div>
+        <div class="hint">ESC to close</div>
+      </div>
+
       <div id="overlay">
         <canvas id="claw-canvas"></canvas>
         <h1>DAD'S NIGHTMARE</h1>
@@ -444,34 +473,6 @@
         </div>
         <div id="gp-controls" class="controls-list" style="display:none">
           LEFT STICK — Move &nbsp;|&nbsp; RIGHT STICK — Look &nbsp;|&nbsp; A — Jump &nbsp;|&nbsp; B — Crouch &nbsp;|&nbsp; X — Flashlight &nbsp;|&nbsp; L3 — Sprint
-        </div>
-        <div id="options-menu" class="popup-menu">
-          <h2>Options</h2>
-          <label id="vibration-label" style="display:none">
-            <input type="checkbox" id="vibration-cb"> Vibration
-          </label>
-          <div class="section-label">Sound</div>
-          <label id="mic-label">
-            <input type="checkbox" id="mic-cb"> Microphone input
-          </label>
-          <label id="mic-reverb-label" class="disabled">
-            <input type="checkbox" id="mic-reverb-cb"> Voice reverb
-          </label>
-          <div class="section-label">Graphics</div>
-          <label>
-            <input type="checkbox" id="opt-shadows" checked> Shadows
-          </label>
-          <label>
-            <input type="checkbox" id="opt-posterize" checked> Posterize effect
-          </label>
-          <div class="section-label">Resolution</div>
-          <div class="floor-btns">
-            <button data-pixelscale="1">1×</button>
-            <button data-pixelscale="2">2×</button>
-            <button data-pixelscale="4" class="active">4×</button>
-            <button data-pixelscale="8">8×</button>
-          </div>
-          <div class="hint">Click outside to close</div>
         </div>
         <div class="overlay-btn-row">
           <button id="start-btn">ENTER</button>
@@ -488,11 +489,14 @@
       const optBtn  = document.getElementById('options-btn');
       optBtn.addEventListener('click', function(e) {
         e.stopPropagation();
-        optMenu.style.display = optMenu.style.display === 'block' ? 'none' : 'block';
+        // Use exported API when available (handles pause/resume), else direct
+        if (window.optionsMenu) window.optionsMenu.toggle();
+        else optMenu.style.display = optMenu.style.display === 'block' ? 'none' : 'block';
       });
       document.addEventListener('click', function(e) {
-        if (!optMenu.contains(e.target) && e.target !== optBtn) {
-          optMenu.style.display = 'none';
+        if (optMenu.style.display === 'block' && !optMenu.contains(e.target) && e.target !== optBtn) {
+          if (window.optionsMenu) window.optionsMenu.close();
+          else optMenu.style.display = 'none';
         }
       });
 

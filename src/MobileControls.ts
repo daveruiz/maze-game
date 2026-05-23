@@ -16,6 +16,7 @@ const BTN_SIZE           = 58;
 export class MobileControls {
   private player: Player;
   private toggleFlashlight: () => void;
+  private toggleOptions: () => void;
 
   // Root container
   private container!: HTMLDivElement;
@@ -40,9 +41,10 @@ export class MobileControls {
   // Joystick zone ref for coordinate conversion
   private joystickZone!: HTMLDivElement;
 
-  constructor(player: Player, callbacks: { toggleFlashlight: () => void }) {
+  constructor(player: Player, callbacks: { toggleFlashlight: () => void; toggleOptions?: () => void }) {
     this.player = player;
     this.toggleFlashlight = callbacks.toggleFlashlight;
+    this.toggleOptions = callbacks.toggleOptions ?? (() => (window as any).optionsMenu?.toggle());
   }
 
   /** Update player reference (needed after restart creates new Player) */
@@ -200,6 +202,22 @@ export class MobileControls {
         border-color: rgba(255,255,255,0.7);
         background: rgba(255,255,255,0.12);
         color: rgba(255,255,255,0.9);
+      }
+      #btn-mobile-options {
+        position: fixed;
+        top: max(env(safe-area-inset-top, 0px) + 10px, 10px);
+        right: max(env(safe-area-inset-right, 0px) + 10px, 10px);
+        width: 44px; height: 44px;
+        border-radius: 50%;
+        border: 1.5px solid rgba(255,255,255,0.3);
+        background: rgba(0,0,0,0.35);
+        color: rgba(255,255,255,0.6);
+        font-size: 20px;
+        display: flex; align-items: center; justify-content: center;
+        pointer-events: auto;
+        -webkit-tap-highlight-color: transparent;
+        touch-action: none;
+        z-index: 6;
       }
 
       /* Look zone — full right side for camera control */
@@ -409,6 +427,18 @@ export class MobileControls {
     btnContainer.appendChild(btnCrouch);
     this.container.appendChild(btnContainer);
 
+    // Gear / options button — top-right corner, fixed position
+    const btnOptions = document.createElement('button');
+    btnOptions.id = 'btn-mobile-options';
+    btnOptions.setAttribute('aria-label', 'Options');
+    btnOptions.textContent = '⚙';
+    btnOptions.addEventListener('touchstart', (e) => {
+      e.preventDefault();
+      e.stopPropagation();
+      this.toggleOptions();
+    }, { passive: false });
+    this.container.appendChild(btnOptions);
+
     document.body.appendChild(this.container);
   }
 
@@ -416,7 +446,7 @@ export class MobileControls {
     const btn = document.createElement('button');
     btn.className = 'mobile-btn';
     btn.id = id;
-    btn.innerHTML = `<span style="font-size:18px;line-height:1;filter:brightness(0) invert(1)">${icon}</span>`;
+    btn.innerHTML = `<span style="font-size:18px;line-height:1;filter:grayscale(1)">${icon}</span>`;
     btn.setAttribute('aria-label', label);
     return btn;
   }
