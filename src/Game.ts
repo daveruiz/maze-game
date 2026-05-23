@@ -1382,6 +1382,20 @@ if (caught && !caughtBy) {
         btn.classList.add('active');
       });
     });
+
+    // Shadows toggle
+    const shadowsCb = document.getElementById('opt-shadows') as HTMLInputElement;
+    shadowsCb.addEventListener('change', () => {
+      const on = shadowsCb.checked;
+      this.flashlight.castShadow = on;
+      this.lanternPool.slice(0, 2).forEach(l => { l.castShadow = on; });
+    });
+
+    // Posterize effect toggle
+    const posterizeCb = document.getElementById('opt-posterize') as HTMLInputElement;
+    posterizeCb.addEventListener('change', () => {
+      this.horrorPass.uniforms['posterLevels'].value = posterizeCb.checked ? 12.0 : 256.0;
+    });
   }
 
   private toggleFlashlight() {
