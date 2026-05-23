@@ -11,6 +11,10 @@ export const optionsMenu = {
     document.getElementById('options-menu')!.style.display = 'none';
     document.dispatchEvent(new CustomEvent('optionsmenu', { detail: { open: false } }));
   },
+  closeQuiet() {
+    document.getElementById('options-menu')!.style.display = 'none';
+    // No event dispatched — caller manages game state
+  },
   toggle() {
     const el = document.getElementById('options-menu')!;
     if (el.style.display === 'block') this.close(); else this.open();
@@ -71,4 +75,37 @@ export function initOptionsMenu() {
   micReverbVol.addEventListener('input', () => settings.set('micReverbVolume', parseInt(micReverbVol.value) / 100));
   shadowsCb.addEventListener('change',   () => settings.set('shadows',   shadowsCb.checked));
   posterizeCb.addEventListener('change', () => settings.set('posterize', posterizeCb.checked));
+
+  // Mobile layout section — shown only on touch devices
+  if ('ontouchstart' in window) {
+    const mobileSection = document.getElementById('mobile-layout-section');
+    const mobileScaleLabel = document.getElementById('mobile-scale-label');
+    const configureBtn = document.getElementById('opt-configure-layout');
+    if (mobileSection)   mobileSection.style.display   = '';
+    if (mobileScaleLabel) mobileScaleLabel.style.display = 'flex';
+    if (configureBtn)    configureBtn.style.display     = 'block';
+  }
+
+  const mobileScaleInput = document.getElementById('mobile-scale') as HTMLInputElement | null;
+  if (mobileScaleInput) {
+    mobileScaleInput.value = String(Math.round(settings.get('mobileScale') * 100));
+    mobileScaleInput.addEventListener('input', () =>
+      settings.set('mobileScale', parseInt(mobileScaleInput.value) / 100));
+  }
+
+  const configureBtn = document.getElementById('opt-configure-layout') as HTMLButtonElement | null;
+  if (configureBtn) {
+    let lastTouch = 0;
+    const doConfig = () => {
+      optionsMenu.closeQuiet();
+      document.dispatchEvent(new CustomEvent('mobilelayoutedit'));
+    };
+    configureBtn.addEventListener('touchstart', (e) => {
+      e.preventDefault(); lastTouch = Date.now(); doConfig();
+    }, { passive: false });
+    configureBtn.addEventListener('click', () => {
+      if (Date.now() - lastTouch < 500) return;
+      doConfig();
+    });
+  }
 }

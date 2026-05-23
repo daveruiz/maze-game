@@ -3,6 +3,13 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no, viewport-fit=cover" />
+  <link rel="manifest" href="./manifest.json">
+  <meta name="theme-color" content="#e8c56d">
+  <meta name="mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+  <meta name="apple-mobile-web-app-title" content="Dad's Nightmare">
+  <link rel="apple-touch-icon" href="./icon.svg">
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Barriecito&display=swap" rel="stylesheet">
@@ -364,6 +371,14 @@
       transition: background 0.2s;
     }
     #start-btn:hover { background: #f0d080; }
+    .popup-menu .configure-btn {
+      width: 100%; padding: 8px; margin-top: 4px;
+      background: transparent; border: 1px solid rgba(255,200,60,0.5);
+      color: #e8c56d; border-radius: 4px; cursor: pointer;
+      font-family: "Barriecito", system-ui; font-size: 13px; letter-spacing: 1px;
+    }
+    .popup-menu .configure-btn:hover { background: rgba(255,200,60,0.1); }
+    .small-screen .popup-menu .configure-btn { font-size: 26px; padding: 16px; }
   </style>
 </head>
 <body>
@@ -469,6 +484,12 @@
           <button data-pixelscale="4" class="active">4×</button>
           <button data-pixelscale="8">8×</button>
         </div>
+        <div class="section-label" id="mobile-layout-section" style="display:none">Touch controls</div>
+        <label id="mobile-scale-label" style="display:none;flex-direction:column;align-items:flex-start;gap:4px;">
+          <span>Button size</span>
+          <input type="range" id="mobile-scale" min="50" max="200" value="100" style="width:100%">
+        </label>
+        <button id="opt-configure-layout" class="configure-btn" style="display:none">Edit layout</button>
         <div class="hint">ESC to close</div>
       </div>
 
@@ -815,5 +836,12 @@
   </script>
 
   <script type="module" src="/src/main.ts"></script>
+  <script>
+    if ('serviceWorker' in navigator) {
+      window.addEventListener('load', () =>
+        navigator.serviceWorker.register('./sw.js').catch(() => {})
+      );
+    }
+  </script>
 </body>
 </html>

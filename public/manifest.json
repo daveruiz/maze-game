@@ -1,0 +1,14 @@
+{
+  "name": "Dad's Nightmare",
+  "short_name": "Dad's Nightmare",
+  "description": "3D first-person horror maze game — escape the maze, avoid the monster",
+  "start_url": "./",
+  "scope": "./",
+  "display": "standalone",
+  "orientation": "landscape",
+  "background_color": "#050408",
+  "theme_color": "#e8c56d",
+  "icons": [
+    { "src": "./icon.svg", "sizes": "any", "type": "image/svg+xml", "purpose": "any" }
+  ]
+}

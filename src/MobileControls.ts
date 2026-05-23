@@ -1,5 +1,7 @@
 import { Player } from './Player';
 import { inputMode, isMobileDevice } from './InputMode';
+import { settings } from './Settings';
+import type { SettingsData } from './Settings';
 
 // Re-export for backward compat
 export { isMobileDevice };
@@ -20,6 +22,13 @@ export class MobileControls {
 
   // Root container
   private container!: HTMLDivElement;
+
+  // Action buttons (saved for layout customization)
+  private btnJump!:   HTMLButtonElement;
+  private btnCrouch!: HTMLButtonElement;
+  private btnFlash!:  HTMLButtonElement;
+  private editCleanup: (() => void)[] = [];
+  private editOverlay: HTMLDivElement | null = null;
 
   // Fullscreen CTA
   private ctaOverlay!: HTMLDivElement;
@@ -166,7 +175,7 @@ export class MobileControls {
         transition: none;
       }
 
-      /* Action buttons — stacked vertically at mid-screen right */
+      /* Action buttons — positions applied by JS via applyLayout() */
       #mobile-buttons {
         position: absolute; top: 0; left: 0;
         width: 100%; height: 100%;
@@ -176,12 +185,6 @@ export class MobileControls {
         position: absolute;
         pointer-events: auto;
       }
-      /* Top button (jump): vertically centered, closer to edge */
-      #btn-mobile-jump       { top: calc(50% - ${BTN_SIZE + 10}px); right: 20px; }
-      /* Bottom-right button (crouch): just below center, near edge */
-      #btn-mobile-crouch     { top: calc(50% + 10px);              right: 20px; }
-      /* Bottom-left button (flashlight): just below center, inset for thumb arc */
-      #btn-mobile-flashlight { top: calc(50% + 10px);              right: 86px; }
       .mobile-btn {
         width: ${BTN_SIZE}px; height: ${BTN_SIZE}px;
         border-radius: 50%;
@@ -388,8 +391,11 @@ export class MobileControls {
     btnContainer.id = 'mobile-buttons';
 
     const btnFlash  = this.makeButton('🔦', 'Light', 'btn-mobile-flashlight');
+    this.btnFlash = btnFlash;
     const btnJump   = this.makeButton('⬆', 'Jump', 'btn-mobile-jump');
+    this.btnJump = btnJump;
     const btnCrouch = this.makeButton('⬇', 'Crouch', 'btn-mobile-crouch');
+    this.btnCrouch = btnCrouch;
 
     // Flashlight tap
     btnFlash.addEventListener('touchstart', (e) => {
@@ -439,7 +445,172 @@ export class MobileControls {
     }, { passive: false });
     this.container.appendChild(btnOptions);
 
+    this.applyLayout();
     document.body.appendChild(this.container);
+  }
+
+  applyLayout() {
+    const scale = settings.get('mobileScale');
+    const px = Math.round(BTN_SIZE * scale);
+    const applyBtn = (btn: HTMLButtonElement, xKey: keyof SettingsData, yKey: keyof SettingsData) => {
+      btn.style.left   = settings.get(xKey) + '%';
+      btn.style.top    = settings.get(yKey) + '%';
+      btn.style.right  = 'auto';
+      btn.style.width  = px + 'px';
+      btn.style.height = px + 'px';
+      const span = btn.querySelector('span');
+      if (span) (span as HTMLElement).style.fontSize = Math.round(18 * scale) + 'px';
+    };
+    applyBtn(this.btnJump,   'mobileBtnJumpX',   'mobileBtnJumpY');
+    applyBtn(this.btnCrouch, 'mobileBtnCrouchX', 'mobileBtnCrouchY');
+    applyBtn(this.btnFlash,  'mobileBtnFlashX',  'mobileBtnFlashY');
+  }
+
+  startEditMode(onDone: () => void) {
+    this.show();
+
+    // Create fullscreen edit overlay
+    this.editOverlay = document.createElement('div');
+    Object.assign(this.editOverlay.style, {
+      position: 'fixed', inset: '0', zIndex: '100',
+      background: 'rgba(0,0,0,0.55)',
+      pointerEvents: 'none',
+      display: 'flex', flexDirection: 'column',
+      alignItems: 'center', justifyContent: 'flex-start',
+      paddingTop: '18px', gap: '10px',
+    });
+
+    // Header label
+    const label = document.createElement('div');
+    label.textContent = 'DRAG BUTTONS TO REPOSITION';
+    Object.assign(label.style, {
+      color: '#e8c56d', fontFamily: '"Barriecito", system-ui',
+      fontSize: '22px', letterSpacing: '3px', pointerEvents: 'none',
+    });
+    this.editOverlay.appendChild(label);
+
+    // Button row: Done + Reset
+    const row = document.createElement('div');
+    Object.assign(row.style, { display: 'flex', gap: '16px', pointerEvents: 'auto' });
+
+    const mkBtn = (text: string, bg: string) => {
+      const b = document.createElement('button');
+      b.textContent = text;
+      Object.assign(b.style, {
+        background: bg, color: '#000', border: 'none',
+        borderRadius: '6px', padding: '10px 22px',
+        fontFamily: '"Barriecito", system-ui', fontSize: '20px',
+        cursor: 'pointer', touchAction: 'none',
+      });
+      return b;
+    };
+
+    const doneBtn  = mkBtn('✓  DONE', '#e8c56d');
+    const resetBtn = mkBtn('↺  RESET', '#aaa');
+    row.appendChild(doneBtn);
+    row.appendChild(resetBtn);
+    this.editOverlay.appendChild(row);
+    document.body.appendChild(this.editOverlay);
+
+    // Make each action button draggable
+    const DEFAULTS_MAP = {
+      jump:   { xKey: 'mobileBtnJumpX'   as const, yKey: 'mobileBtnJumpY'   as const, btn: this.btnJump,   dx: 91, dy: 33 },
+      crouch: { xKey: 'mobileBtnCrouchX' as const, yKey: 'mobileBtnCrouchY' as const, btn: this.btnCrouch, dx: 91, dy: 53 },
+      flash:  { xKey: 'mobileBtnFlashX'  as const, yKey: 'mobileBtnFlashY'  as const, btn: this.btnFlash,  dx: 83, dy: 53 },
+    };
+
+    for (const entry of Object.values(DEFAULTS_MAP)) {
+      this.makeDraggable(entry.btn, entry.xKey, entry.yKey);
+      // Visual hint: dashed gold border in edit mode
+      entry.btn.style.border = '2px dashed #e8c56d';
+      entry.btn.style.opacity = '1';
+    }
+
+    const stopEdit = () => {
+      this.stopEditMode();
+      for (const entry of Object.values(DEFAULTS_MAP)) {
+        entry.btn.style.border = '';
+        entry.btn.style.opacity = '';
+      }
+    };
+
+    doneBtn.addEventListener('click', () => { stopEdit(); onDone(); });
+    doneBtn.addEventListener('touchstart', (e) => { e.preventDefault(); stopEdit(); onDone(); }, { passive: false });
+
+    resetBtn.addEventListener('click', () => {
+      for (const entry of Object.values(DEFAULTS_MAP)) {
+        settings.set(entry.xKey, entry.dx);
+        settings.set(entry.yKey, entry.dy);
+      }
+      settings.set('mobileScale', 1.0);
+      // update scale slider if visible
+      const sl = document.getElementById('mobile-scale') as HTMLInputElement | null;
+      if (sl) sl.value = '100';
+      this.applyLayout();
+    });
+    resetBtn.addEventListener('touchstart', (e) => {
+      e.preventDefault();
+      for (const entry of Object.values(DEFAULTS_MAP)) {
+        settings.set(entry.xKey, entry.dx);
+        settings.set(entry.yKey, entry.dy);
+      }
+      settings.set('mobileScale', 1.0);
+      const sl = document.getElementById('mobile-scale') as HTMLInputElement | null;
+      if (sl) sl.value = '100';
+      this.applyLayout();
+    }, { passive: false });
+  }
+
+  private makeDraggable(
+    btn: HTMLButtonElement,
+    xKey: keyof SettingsData,
+    yKey: keyof SettingsData
+  ) {
+    let activeTouchId: number | null = null;
+
+    const onStart = (e: TouchEvent) => {
+      e.preventDefault(); e.stopPropagation();
+      if (activeTouchId !== null) return;
+      activeTouchId = e.changedTouches[0].identifier;
+    };
+
+    const onMove = (e: TouchEvent) => {
+      if (activeTouchId === null) return;
+      const touch = Array.from(e.changedTouches).find(c => c.identifier === activeTouchId);
+      if (!touch) return;
+      e.preventDefault();
+      const scale  = settings.get('mobileScale');
+      const btnPx  = BTN_SIZE * scale;
+      const x = Math.max(0, Math.min(100 - btnPx / window.innerWidth  * 100, (touch.clientX - btnPx / 2) / window.innerWidth  * 100));
+      const y = Math.max(0, Math.min(100 - btnPx / window.innerHeight * 100, (touch.clientY - btnPx / 2) / window.innerHeight * 100));
+      settings.set(xKey, Math.round(x * 10) / 10);
+      settings.set(yKey, Math.round(y * 10) / 10);
+      btn.style.left = x + '%';
+      btn.style.top  = y + '%';
+    };
+
+    const onEnd = (e: TouchEvent) => {
+      if (Array.from(e.changedTouches).some(c => c.identifier === activeTouchId)) activeTouchId = null;
+    };
+
+    btn.addEventListener('touchstart', onStart, { passive: false });
+    document.addEventListener('touchmove',  onMove, { passive: false });
+    document.addEventListener('touchend',   onEnd,  { passive: false });
+    document.addEventListener('touchcancel',onEnd,  { passive: false });
+
+    this.editCleanup.push(() => {
+      btn.removeEventListener('touchstart', onStart);
+      document.removeEventListener('touchmove',   onMove);
+      document.removeEventListener('touchend',    onEnd);
+      document.removeEventListener('touchcancel', onEnd);
+    });
+  }
+
+  private stopEditMode() {
+    this.editCleanup.forEach(fn => fn());
+    this.editCleanup = [];
+    this.editOverlay?.remove();
+    this.editOverlay = null;
   }
 
   private makeButton(icon: string, label: string, id: string): HTMLButtonElement {

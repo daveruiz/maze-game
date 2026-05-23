@@ -5,6 +5,13 @@ export interface SettingsData {
   vibration:       boolean;
   micInput:        boolean;
   micReverbVolume: number;   // 0=off, 0..1 reverb feedback level
+  mobileScale:      number;   // 1.0 = default button size (multiplier)
+  mobileBtnJumpX:   number;   // % from left (0-100)
+  mobileBtnJumpY:   number;   // % from top  (0-100)
+  mobileBtnCrouchX: number;
+  mobileBtnCrouchY: number;
+  mobileBtnFlashX:  number;
+  mobileBtnFlashY:  number;
 }
 
 const DEFAULTS: SettingsData = {
@@ -14,6 +21,10 @@ const DEFAULTS: SettingsData = {
   vibration:       false,
   micInput:        false,
   micReverbVolume: 0.8,
+  mobileScale:      1.0,
+  mobileBtnJumpX:   91,  mobileBtnJumpY:   33,
+  mobileBtnCrouchX: 91,  mobileBtnCrouchY: 53,
+  mobileBtnFlashX:  83,  mobileBtnFlashY:  53,
 };
 
 const KEY = 'dads-nightmare-settings';

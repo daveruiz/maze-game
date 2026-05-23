@@ -230,6 +230,13 @@ export class Game {
         }
       }
     });
+    document.addEventListener('mobilelayoutedit', () => {
+      this.mobileControls?.startEditMode(() => {
+        this.pausedByMenu = false;
+        this.resumeGame();
+        if (inputMode.isTouch) this.mobileControls?.show();
+      });
+    });
     document.addEventListener('mousemove', () => {
       this.gamepad.onKeyboardInput();
     });
@@ -344,6 +351,7 @@ export class Game {
         toggleFlashlight: () => this.toggleFlashlight()
       });
       this.mobileControls.init();
+      this.mobileControls.applyLayout();
     } else {
       this.mobileControls.setPlayer(this.player);
       if (inputMode.isTouch) this.mobileControls.show();
@@ -1009,6 +1017,9 @@ if (caught && !caughtBy) {
       // Volume changed while mic is connected — adjust gain live, no reconnection needed
       this.audio.setMicReverbVolume(reverbVol);
     }
+
+    // Mobile layout
+    this.mobileControls?.applyLayout();
   }
 
   private async setupMicrophone() {
