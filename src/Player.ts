@@ -1,5 +1,6 @@
 import * as THREE from 'three';
 import { MazeGenerator, CELL_SIZE, WALL_HEIGHT, OBSTACLE_HEIGHT } from './Maze';
+import { settings } from './Settings';
 
 const BASE_SPEED    = 2.8125; // 25% slower than original 3.75
 const SPRINT_MULT   = 2.0;    // shift doubles speed (back to original 7.5)
@@ -9,7 +10,7 @@ const PLAYER_HEIGHT = 1.6;
 const CROUCH_HEIGHT = 0.7;   // camera height when crouching (bigger drop)
 const PLAYER_RADIUS = 0.65;
 const GRAVITY       = -24;
-const JUMP_FORCE    = 9;
+const JUMP_FORCE    = 7;
 const WALL_MARGIN   = 0.55;
 
 // Inertia
@@ -54,6 +55,7 @@ export class Player {
   private exhausted = false; // true when stamina hit 0, clears at 15%
   sprinting = false;
   crouching = false;
+  private crouchToggled = false; // for toggle mode
 
   // Head bob
   private bobPhase = 0;         // oscillation phase (radians)
@@ -109,12 +111,20 @@ export class Player {
       if (['KeyW','KeyA','KeyS','KeyD','ArrowUp','ArrowDown','ArrowLeft','ArrowRight','Space'].includes(e.code)) {
         e.preventDefault();
       }
+      // Prevent Ctrl+W from closing the tab during gameplay
+      if (e.code === 'KeyW' && (e.ctrlKey || e.metaKey) && this.locked) {
+        e.preventDefault();
+      }
       if (e.code === 'Space' && this.isOnGround && this.stamina >= STAMINA_JUMP_COST * 0.5) {
         this.verticalVelocity = JUMP_FORCE;
         this.isOnGround = false;
         this.justJumped = true;
         this.stamina = Math.max(0, this.stamina - STAMINA_JUMP_COST);
         if (this.stamina <= 0) this.exhausted = true;
+      }
+      // Toggle crouch on key press (when toggle mode is enabled)
+      if ((e.code === 'KeyC' || e.code === 'ControlLeft' || e.code === 'ControlRight') && settings.get('toggleCrouch')) {
+        this.crouchToggled = !this.crouchToggled;
       }
     });
     document.addEventListener('keyup', e => { this.keys[e.code] = false; });
@@ -127,8 +137,9 @@ export class Player {
       let mx = e.movementX;
       let my = e.movementY;
       if (Math.abs(mx) > MAX_MOVEMENT || Math.abs(my) > MAX_MOVEMENT) return; // discard spike
-      this.yaw   -= mx * 0.002;
-      this.pitch  -= my * 0.002;
+      const sens = 0.002 * settings.get('mouseSensitivity');
+      this.yaw   -= mx * sens;
+      this.pitch  -= my * sens;
       this.pitch = Math.max(-Math.PI / 2.2, Math.min(Math.PI / 2.2, this.pitch));
     });
 
@@ -143,6 +154,7 @@ export class Player {
   /** Reset crouch state (call on death) */
   resetCrouch() {
     this.crouching = false;
+    this.crouchToggled = false;
     this.currentCrouchDip = 0;
   }
 
@@ -174,7 +186,8 @@ export class Player {
     this.justJumped  = false;
 
     // ── Crouch, Sprint & stamina ──────────────────────────────────────
-    const wantCrouch = !!(this.keys['KeyC'] || this.keys['ControlLeft'] || this.keys['ControlRight']);
+    const holdCrouch = !!(this.keys['KeyC'] || this.keys['ControlLeft'] || this.keys['ControlRight']);
+    const wantCrouch = settings.get('toggleCrouch') ? this.crouchToggled : holdCrouch;
     const wantSprint = !!(this.keys['ShiftLeft'] || this.keys['ShiftRight']);
     const hasInput = !!(this.keys['KeyW'] || this.keys['KeyS'] || this.keys['KeyA'] || this.keys['KeyD']
                       || this.keys['ArrowUp'] || this.keys['ArrowDown'] || this.keys['ArrowLeft'] || this.keys['ArrowRight']);

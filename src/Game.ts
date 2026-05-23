@@ -1122,7 +1122,15 @@ if (caught && !caughtBy) {
     this.staminaFillEl.style.width = `${stam}%`;
     this.staminaFillEl.style.background =
       stam > 50 ? '#4f8' : stam > 25 ? '#fa4' : '#f44';
-    this.staminaIconEl.style.opacity = this.player.sprinting ? '1' : '0';
+    if (this.player.crouching) {
+      this.staminaIconEl.textContent = '🧎';
+      this.staminaIconEl.style.opacity = '1';
+    } else if (this.player.sprinting) {
+      this.staminaIconEl.textContent = '🏃';
+      this.staminaIconEl.style.opacity = '1';
+    } else {
+      this.staminaIconEl.style.opacity = '0';
+    }
 
     this.updateItemsHUD();
     this.drawMinimap();
@@ -1430,9 +1438,11 @@ if (caught && !caughtBy) {
       if (this.debugLight) {
         this.scene.fog = null;
         this.scene.add(this.debugAmbient);
+        this.ssaoPass.enabled = false; // AO kills GPU in full-bright
       } else {
         this.scene.remove(this.debugAmbient);
         this.updateFog(this.player?.floorIndex ?? 0);
+        this.ssaoPass.enabled = settings.get('ambientOcclusion');
       }
     });
 

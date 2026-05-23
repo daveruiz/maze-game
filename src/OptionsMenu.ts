@@ -47,12 +47,17 @@ export function initOptionsMenu() {
   const posterizeCb    = document.getElementById('opt-posterize')   as HTMLInputElement;
   const aoCb           = document.getElementById('opt-ao')          as HTMLInputElement;
 
-  vibCb.checked       = settings.get('vibration');
-  micCb.checked       = settings.get('micInput');
-  micReverbVol.value  = String(Math.round(settings.get('micReverbVolume') * 100));
-  shadowsCb.checked   = settings.get('shadows');
-  posterizeCb.checked = settings.get('posterize');
-  aoCb.checked        = settings.get('ambientOcclusion');
+  const toggleCrouchCb = document.getElementById('opt-toggle-crouch') as HTMLInputElement;
+  const mouseSensInput = document.getElementById('opt-mouse-sens')    as HTMLInputElement;
+
+  vibCb.checked            = settings.get('vibration');
+  micCb.checked            = settings.get('micInput');
+  micReverbVol.value       = String(Math.round(settings.get('micReverbVolume') * 100));
+  shadowsCb.checked        = settings.get('shadows');
+  posterizeCb.checked      = settings.get('posterize');
+  aoCb.checked             = settings.get('ambientOcclusion');
+  toggleCrouchCb.checked   = settings.get('toggleCrouch');
+  mouseSensInput.value     = String(Math.round(settings.get('mouseSensitivity') * 100));
 
   // Reverb slider depends on mic being enabled
   function syncMicReverb() {
@@ -78,6 +83,8 @@ export function initOptionsMenu() {
   shadowsCb.addEventListener('change',   () => settings.set('shadows',   shadowsCb.checked));
   posterizeCb.addEventListener('change', () => settings.set('posterize', posterizeCb.checked));
   aoCb.addEventListener('change',        () => settings.set('ambientOcclusion', aoCb.checked));
+  toggleCrouchCb.addEventListener('change', () => settings.set('toggleCrouch', toggleCrouchCb.checked));
+  mouseSensInput.addEventListener('input',  () => settings.set('mouseSensitivity', parseInt(mouseSensInput.value) / 100));
 
   // Mobile layout section — shown only on touch devices
   if ('ontouchstart' in window) {

@@ -6,6 +6,8 @@ export interface SettingsData {
   vibration:       boolean;
   micInput:        boolean;
   micReverbVolume: number;   // 0=off, 0..1 reverb feedback level
+  toggleCrouch:    boolean;  // true = press to toggle, false = hold to crouch
+  mouseSensitivity: number;  // multiplier: 1.0 = default, 0.5 = slow, 2.0 = fast
   mobileScale:      number;   // 1.0 = default button size (multiplier)
   mobileBtnJumpX:   number;   // % from left (0-100)
   mobileBtnJumpY:   number;   // % from top  (0-100)
@@ -23,6 +25,8 @@ const DEFAULTS: SettingsData = {
   vibration:        false,
   micInput:         false,
   micReverbVolume:  0.5,
+  toggleCrouch:     false,
+  mouseSensitivity: 1.0,
   mobileScale:      1.0,
   mobileBtnJumpX:   91,  mobileBtnJumpY:   33,
   mobileBtnCrouchX: 91,  mobileBtnCrouchY: 53,
