@@ -149,8 +149,8 @@
       letter-spacing: 2px;
     }
 
-    /* ── Debug menu ── */
-    #debug-menu {
+    /* ── Shared popup menu (debug + options) ── */
+    .popup-menu {
       position: absolute;
       top: 50%; left: 50%;
       transform: translate(-50%, -50%);
@@ -165,7 +165,7 @@
       color: #ccc;
       font-size: 13px;
     }
-    #debug-menu h2 {
+    .popup-menu h2 {
       margin: 0 0 14px;
       font-size: 14px;
       color: #e8c56d;
@@ -175,16 +175,16 @@
       border-bottom: 1px solid rgba(255,255,255,0.15);
       padding-bottom: 8px;
     }
-    #debug-menu .section-label {
+    .popup-menu .section-label {
       font-size: 10px;
       color: #888;
       letter-spacing: 2px;
       text-transform: uppercase;
       margin: 12px 0 6px;
     }
-    #debug-menu .section-label:first-of-type { margin-top: 0; }
-    #debug-menu .floor-btns { display: flex; gap: 6px; }
-    #debug-menu .floor-btns button {
+    .popup-menu .section-label:first-of-type { margin-top: 0; }
+    .popup-menu .floor-btns { display: flex; gap: 6px; }
+    .popup-menu .floor-btns button {
       flex: 1;
       background: rgba(255,255,255,0.1);
       border: 1px solid rgba(255,255,255,0.2);
@@ -196,28 +196,29 @@
       border-radius: 3px;
       transition: background 0.15s;
     }
-    #debug-menu .floor-btns button:hover {
+    .popup-menu .floor-btns button:hover {
       background: rgba(232,197,109,0.3);
       color: #fff;
     }
-    #debug-menu .floor-btns button.active {
+    .popup-menu .floor-btns button.active {
       background: rgba(232,197,109,0.5);
       color: #fff;
       border-color: #e8c56d;
     }
-    #debug-menu label {
+    .popup-menu label {
       display: flex;
       align-items: center;
       gap: 8px;
       padding: 4px 0;
       cursor: pointer;
     }
-    #debug-menu label:hover { color: #fff; }
-    #debug-menu input[type="checkbox"] {
+    .popup-menu label:hover { color: #fff; }
+    .popup-menu label.disabled { opacity: 0.35; pointer-events: none; }
+    .popup-menu input[type="checkbox"] {
       accent-color: #e8c56d;
       width: 14px; height: 14px;
     }
-    #debug-menu .hint {
+    .popup-menu .hint {
       font-size: 10px;
       color: #666;
       text-align: center;
@@ -288,10 +289,28 @@
       height: 100%;
       pointer-events: none;
     }
-    #overlay h1, #overlay p, #overlay .controls-list, #overlay #start-btn {
+    #overlay h1, #overlay p, #overlay .controls-list, #overlay .overlay-btn-row {
       position: relative;
       z-index: 1;
     }
+    .overlay-btn-row {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+    }
+    #options-btn {
+      background: transparent;
+      color: #e8c56d;
+      border: 2px solid rgba(232,197,109,0.5);
+      padding: 12px 20px;
+      font-size: 2rem;
+      font-family: "Barriecito", system-ui;
+      letter-spacing: 2px;
+      cursor: pointer;
+      border-radius: 2px;
+      transition: border-color 0.2s, background 0.2s;
+    }
+    #options-btn:hover { border-color: #e8c56d; background: rgba(232,197,109,0.1); }
     #overlay h1 {
       font-size: 7rem;
       letter-spacing: 8px;
@@ -326,37 +345,6 @@
       transition: background 0.2s;
     }
     #start-btn:hover { background: #f0d080; }
-    #overlay-options {
-      position: absolute;
-      bottom: 40px;
-      left: 50%;
-      transform: translateX(-50%);
-      display: flex;
-      flex-direction: column;
-      align-items: center;
-      gap: 12px;
-      z-index: 1;
-    }
-    #overlay-options label {
-      display: flex;
-      align-items: center;
-      gap: 10px;
-      color: #555;
-      font-size: 1.8rem;
-      letter-spacing: 2px;
-      text-transform: uppercase;
-      cursor: pointer;
-      user-select: none;
-      white-space: nowrap;
-    }
-    #overlay-options label:hover { color: #888; }
-    #overlay-options label.disabled { opacity: 0.35; pointer-events: none; }
-    #overlay-options input[type="checkbox"] {
-      accent-color: #e8c56d;
-      width: 18px; height: 18px;
-      cursor: pointer;
-      flex-shrink: 0;
-    }
   </style>
 </head>
 <body>
@@ -416,7 +404,7 @@
         <canvas id="minimap" width="120" height="120"></canvas>
         <div id="key-needed"></div>
         <div id="message"></div>
-        <div id="debug-menu">
+        <div id="debug-menu" class="popup-menu">
           <h2>DEBUG</h2>
           <div class="section-label">Jump to floor</div>
           <div class="floor-btns">
@@ -451,17 +439,23 @@
         <div id="gp-controls" class="controls-list" style="display:none">
           LEFT STICK — Move &nbsp;|&nbsp; RIGHT STICK — Look &nbsp;|&nbsp; A — Jump &nbsp;|&nbsp; B — Crouch &nbsp;|&nbsp; X — Flashlight &nbsp;|&nbsp; L3 — Sprint
         </div>
-        <button id="start-btn">ENTER</button>
-        <div id="overlay-options">
+        <div id="options-menu" class="popup-menu">
+          <h2>Options</h2>
           <label id="vibration-label" style="display:none">
             <input type="checkbox" id="vibration-cb"> Vibration
           </label>
+          <div class="section-label">Sound</div>
           <label id="mic-label">
             <input type="checkbox" id="mic-cb"> Microphone input
           </label>
           <label id="mic-reverb-label" class="disabled">
             <input type="checkbox" id="mic-reverb-cb"> Voice reverb
           </label>
+          <div class="hint">Click outside to close</div>
+        </div>
+        <div class="overlay-btn-row">
+          <button id="start-btn">ENTER</button>
+          <button id="options-btn">⚙</button>
         </div>
       </div>
 
@@ -469,20 +463,34 @@
   </div>
   <script>
     (function () {
-      // Show vibration checkbox when device/gamepad haptics may be available
-      if ('vibrate' in navigator) {
+      // ── Options menu ─────────────────────────────────────────────────
+      const optMenu = document.getElementById('options-menu');
+      const optBtn  = document.getElementById('options-btn');
+      function toggleOptions(e) {
+        e.stopPropagation();
+        optMenu.style.display = optMenu.style.display === 'block' ? 'none' : 'block';
+      }
+      function closeOptions(e) {
+        if (!optMenu.contains(e.target) && e.target !== optBtn) {
+          optMenu.style.display = 'none';
+        }
+      }
+      optBtn.addEventListener('click', toggleOptions);
+      document.addEventListener('click', closeOptions);
+
+      // Show vibration row only when haptics are available
+      function showVibration() {
         document.getElementById('vibration-label').style.display = 'flex';
       }
+      if ('vibrate' in navigator) showVibration();
       window.addEventListener('gamepadconnected', function(e) {
-        if (e.gamepad.vibrationActuator) {
-          document.getElementById('vibration-label').style.display = 'flex';
-        }
+        if (e.gamepad.vibrationActuator) showVibration();
       });
 
-      // Mic reverb depends on mic being enabled
-      const micCb = document.getElementById('mic-cb');
+      // Voice reverb depends on mic being enabled
+      const micCb         = document.getElementById('mic-cb');
       const micReverbLabel = document.getElementById('mic-reverb-label');
-      const micReverbCb = document.getElementById('mic-reverb-cb');
+      const micReverbCb   = document.getElementById('mic-reverb-cb');
       micCb.addEventListener('change', function() {
         if (micCb.checked) {
           micReverbLabel.classList.remove('disabled');
@@ -492,6 +500,7 @@
         }
       });
 
+      // ── Gamepad controls hint ─────────────────────────────────────────
       const kb = document.getElementById('kb-controls');
       const gp = document.getElementById('gp-controls');
       function showGamepad(on) {
@@ -500,11 +509,9 @@
       }
       window.addEventListener('gamepadconnected', () => showGamepad(true));
       window.addEventListener('gamepaddisconnected', () => {
-        // Only hide gamepad controls if no gamepads remain connected
         const pads = navigator.getGamepads ? Array.from(navigator.getGamepads()).filter(Boolean) : [];
         showGamepad(pads.length > 0);
       });
-      // Check for already-connected gamepads on load
       if (navigator.getGamepads) {
         const pads = Array.from(navigator.getGamepads()).filter(Boolean);
         if (pads.length > 0) showGamepad(true);
