@@ -95,6 +95,11 @@ export class MobileControls {
   update() {
     if (!inputMode.isTouch) return;
 
+    // In toggle mode, keep the crouch button's active class synced with actual crouch state
+    if (settings.get('toggleCrouch')) {
+      this.btnCrouch.classList.toggle('active', this.player.crouching);
+    }
+
     const mag = Math.sqrt(this.joyVecX * this.joyVecX + this.joyVecY * this.joyVecY);
 
     // Movement keys from joystick angle
@@ -432,18 +437,19 @@ export class MobileControls {
       this.player.triggerJump();
     }, { passive: false });
 
-    // Crouch hold — press and hold to crouch, release to stand
+    // Crouch — hold mode: hold to crouch, release to stand.
+    //          toggle mode: each tap toggles; visual state is synced in update().
     const crouchStart = (e: Event) => {
       e.preventDefault();
       e.stopPropagation();
-      this.player.setKey('KeyC', true);
-      btnCrouch.classList.add('active');
+      this.player.triggerCrouchStart();
+      if (!settings.get('toggleCrouch')) btnCrouch.classList.add('active');
     };
     const crouchEnd = (e: Event) => {
       e.preventDefault();
       e.stopPropagation();
-      this.player.setKey('KeyC', false);
-      btnCrouch.classList.remove('active');
+      this.player.triggerCrouchEnd();
+      if (!settings.get('toggleCrouch')) btnCrouch.classList.remove('active');
     };
     btnCrouch.addEventListener('touchstart', crouchStart, { passive: false });
     btnCrouch.addEventListener('touchend', crouchEnd, { passive: false });

@@ -158,6 +158,22 @@ export class Player {
   /** Mobile: set a virtual key state */
   setKey(code: string, pressed: boolean) { this.keys[code] = pressed; }
 
+  /** Mobile: start crouch — toggles in toggle mode, holds in hold mode */
+  triggerCrouchStart() {
+    if (settings.get('toggleCrouch')) {
+      this.crouchToggled = !this.crouchToggled;
+    } else {
+      this.keys['KeyC'] = true;
+    }
+  }
+
+  /** Mobile: end crouch — only relevant in hold mode (toggle mode ignores this) */
+  triggerCrouchEnd() {
+    if (!settings.get('toggleCrouch')) {
+      this.keys['KeyC'] = false;
+    }
+  }
+
   /** Mobile: apply look delta (touch drag) */
   applyLookDelta(dx: number, dy: number) {
     this.yaw   -= dx;
