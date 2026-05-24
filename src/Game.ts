@@ -562,8 +562,8 @@ export class Game {
           this.deathYaw += yawDiff * lerpSpeed;
           this.deathPitch += (targetPitch - this.deathPitch) * lerpSpeed;
 
-          // Hit flinch at ~1.2s: enemy strikes the player, camera jerks away
-          if (this.deathTimer >= 1.2) {
+          // Hit flinch at ~1s: enemy strikes the player, camera jerks away
+          if (this.deathTimer >= 1) {
             this.deathHitApplied = true;
             // Dramatic turn to the right from the blow
             this.deathYaw += 1.4;
