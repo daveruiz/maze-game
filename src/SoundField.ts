@@ -159,9 +159,7 @@ export function computeSoundField(
   return {
     dirX:          dirX[pi],
     dirZ:          dirZ[pi],
-    // Source cell has coh=0 (no directional arrow) but confidence should be 1
-    // when the enemy is in the same cell — they're clearly audible right next to you.
-    confidence:    pc === 0 ? 1.0 : coh[pi],
+    confidence:    coh[pi],
     energy,
     wallCrossings: 0,
   };

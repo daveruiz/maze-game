@@ -783,6 +783,14 @@ export class Enemy {
     const playerCell = this.maze.worldToCell(playerPos.x, playerPos.z, fi);
     const enemyCell  = this.maze.worldToCell(this.pos.x,  this.pos.z,  fi);
 
+    // Same cell: BFS direction is undefined — use real position directly
+    if (playerCell.x === enemyCell.x && playerCell.z === enemyCell.z) {
+      this.soundVirtualPos.copy(this.pos);
+      this.soundWallCount  = 0;
+      this.soundConfidence = 1.0;
+      return;
+    }
+
     const result = computeSoundField(
       floor,
       enemyCell.x,  enemyCell.z,
