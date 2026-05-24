@@ -28,9 +28,9 @@ interface Zone {
 // Speed zones — editable via the UI
 const zones: Zone[] = [
   { anim: 'Alert',                minSpeed: 0,   maxSpeed: 0.1, refSpeed: 1.0, minScale: 1.0 },
-  { anim: 'Walking',              minSpeed: 0.1, maxSpeed: 2.0, refSpeed: 1.4, minScale: 0.15 },
+  { anim: 'Walking',              minSpeed: 0.1, maxSpeed: 2.0, refSpeed: 1.9, minScale: 0.13 },
   { anim: 'run_fast_10_inplace',  minSpeed: 2.0, maxSpeed: 4.5, refSpeed: 3.0, minScale: 0.20 },
-  { anim: 'Running',              minSpeed: 4.5, maxSpeed: MAX_SPEED, refSpeed: 5.0, minScale: 0.30 },
+  { anim: 'Running',              minSpeed: 4.5, maxSpeed: MAX_SPEED, refSpeed: 5.45, minScale: 0.30 },
 ];
 
 // ─────────────────────────────────────────────────────────────────────────────

@@ -153,6 +153,7 @@ export class Game {
     this.flashlight.shadow.camera.near = 0.5;
     this.flashlight.shadow.camera.far = 40;
     this.flashlight.shadow.bias = -0.002;
+    this.camera.add(this.flashlight);
     this.camera.add(this.flashlight.target);
 
     // Dim torch glow (always on, mimics ambient bounce near player)
