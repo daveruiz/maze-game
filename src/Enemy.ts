@@ -129,6 +129,8 @@ export class Enemy {
   private alertWeight     = 0;
   // Head bone reference for camera targeting
   private headBone:       THREE.Bone | null = null;
+  // Smoothed speed for animation — avoids jitter from frame-to-frame displacement noise
+  private smoothAnimSpeed = 0;
 
   // Locomotion speed zones (tuned in anim-test) — hard boundaries, one animation at a time with crossfade
   // Zone 0 (Alert/stopped) is handled separately via AlertFull clip
@@ -346,15 +348,33 @@ export class Enemy {
     this.alertAction.setEffectiveWeight(this.alertWeight);
   }
 
+  private static readonly ZONE_HYSTERESIS = 0.3; // speed must exceed boundary by this much to switch zones
+  private currentLocoZoneIdx = 0; // track which zone we're in for hysteresis
+
   /**
-   * Pick the locomotion zone for a given speed (hard boundaries).
-   * Returns the matching zone from LOCO_ZONES.
+   * Pick the locomotion zone for a given speed with hysteresis.
+   * Once in a zone, speed must exceed the boundary by ZONE_HYSTERESIS to switch,
+   * preventing flicker when speed sits right on a boundary.
    */
   private locoZoneFor(speed: number) {
-    for (const z of Enemy.LOCO_ZONES) {
-      if (speed <= z.maxSpeed) return z;
+    const zones = Enemy.LOCO_ZONES;
+    const hyst = Enemy.ZONE_HYSTERESIS;
+    let idx = this.currentLocoZoneIdx;
+
+    // Clamp to valid range
+    if (idx < 0 || idx >= zones.length) idx = 0;
+
+    // Check if we should move up to a higher zone
+    while (idx < zones.length - 1 && speed > zones[idx].maxSpeed + hyst) {
+      idx++;
     }
-    return Enemy.LOCO_ZONES[Enemy.LOCO_ZONES.length - 1];
+    // Check if we should move down to a lower zone
+    while (idx > 0 && speed < zones[idx - 1].maxSpeed - hyst) {
+      idx--;
+    }
+
+    this.currentLocoZoneIdx = idx;
+    return zones[idx];
   }
 
   /**
@@ -716,7 +736,10 @@ export class Enemy {
     }
 
     // ── Animation update ─────────────────────────────────────────────────
-    this.updateAnimationState(dt, actualSpeed);
+    // Smooth the speed to avoid animation jitter from frame-to-frame noise
+    const smoothRate = 8.0; // higher = faster response, lower = smoother
+    this.smoothAnimSpeed += (actualSpeed - this.smoothAnimSpeed) * Math.min(1, smoothRate * dt);
+    this.updateAnimationState(dt, this.smoothAnimSpeed);
 
     // ── Audio occlusion: BFS-based sound direction + wall count ────────
     this.soundOcclusionTimer += dt;
