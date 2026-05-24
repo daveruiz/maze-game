@@ -526,6 +526,8 @@ export class AudioManager {
     density: number,
     reflections: number[] = [0.012, 0.025, 0.038, 0.055, 0.073],
     earlyWindow = 0.08,
+    noiseLevel = 1.0,   // 0 = discrete echoes only, 1 = full diffuse noise
+    reflAmp    = 0.5,   // base amplitude for discrete reflection taps
   ): AudioBuffer {
     const sr = this.ctx!.sampleRate;
     const len = sr * decay;
@@ -537,14 +539,14 @@ export class AudioManager {
       const t = i / sr;
       const env = Math.exp(-t * density);
       const earlyBoost = t < earlyWindow ? 1.5 : 1.0;
-      L[i] = (Math.random() * 2 - 1) * env * earlyBoost;
-      R[i] = (Math.random() * 2 - 1) * env * earlyBoost;
+      L[i] = (Math.random() * 2 - 1) * env * earlyBoost * noiseLevel;
+      R[i] = (Math.random() * 2 - 1) * env * earlyBoost * noiseLevel;
     }
 
     for (const rt of reflections) {
       const idx = Math.floor(rt * sr);
       if (idx < len) {
-        const amp = 0.5 * Math.exp(-rt * 2);
+        const amp = reflAmp * Math.exp(-rt * 1.2); // gentler distance rolloff
         L[idx] += amp * (Math.random() > 0.5 ? 1 : -1);
         R[idx] += amp * (Math.random() > 0.5 ? 1 : -1);
       }
@@ -569,7 +571,9 @@ export class AudioManager {
     if (!this.ctx) return;
 
     type ReverbPreset = { decay: number; density: number; reflections: number[]; earlyWindow: number;
-                          enemyDecay: number; enemyDensity: number; enemyReflections: number[] };
+                          noiseLevel?: number; reflAmp?: number;
+                          enemyDecay: number; enemyDensity: number; enemyReflections: number[];
+                          enemyNoiseLevel?: number; enemyReflAmp?: number };
 
     const presets: ReverbPreset[] = [
       // Floor 0: stone basement — long tail, dense early cluster, very reverberant
@@ -588,19 +592,20 @@ export class AudioManager {
         enemyDecay: 1.8, enemyDensity: 4.0,
         enemyReflections: [0.015, 0.035, 0.065, 0.100],
       },
-      // Floor 2: village / outdoor — sparse building echoes, almost no diffuse tail
+      // Floor 2: village / outdoor — discrete building echoes, near-zero diffuse bed
       {
-        decay: 0.9, density: 9.0,
-        reflections: [0.075, 0.175, 0.310, 0.470],
-        earlyWindow: 0.03,
-        enemyDecay: 0.8, enemyDensity: 9.0,
-        enemyReflections: [0.080, 0.190, 0.340],
+        decay: 1.2, density: 18.0,
+        reflections: [0.065, 0.155, 0.270, 0.400, 0.550, 0.720],
+        earlyWindow: 0.02, noiseLevel: 0.04, reflAmp: 0.85,
+        enemyDecay: 1.0, enemyDensity: 18.0,
+        enemyReflections: [0.070, 0.165, 0.285, 0.420, 0.580],
+        enemyNoiseLevel: 0.04, enemyReflAmp: 0.85,
       },
     ];
 
     const p = presets[floorIndex] ?? presets[1];
-    this.masterConvolver.buffer = this.generateImpulseResponse(p.decay, p.density, p.reflections, p.earlyWindow);
-    this.enemyConvolver.buffer  = this.generateImpulseResponse(p.enemyDecay, p.enemyDensity, p.enemyReflections, p.earlyWindow);
+    this.masterConvolver.buffer = this.generateImpulseResponse(p.decay, p.density, p.reflections, p.earlyWindow, p.noiseLevel, p.reflAmp);
+    this.enemyConvolver.buffer  = this.generateImpulseResponse(p.enemyDecay, p.enemyDensity, p.enemyReflections, p.earlyWindow, p.enemyNoiseLevel, p.enemyReflAmp);
   }
 
   private async loadMp3Buffers() {

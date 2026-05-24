@@ -486,7 +486,7 @@ export class Game {
     if (this.globalLights[0]) (this.globalLights[0] as THREE.AmbientLight).intensity = ambientScale;
 
     // Reverb wet level + impulse character per floor
-    const reverbLevels = [1.4, 0.65, 0.28];
+    const reverbLevels = [1.4, 0.65, 0.45];
     this.audio.setReverbLevel(reverbLevels[floorIdx] ?? 0.3);
     this.audio.setFloorReverb(floorIdx);
 
