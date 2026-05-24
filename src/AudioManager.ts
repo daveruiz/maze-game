@@ -429,6 +429,8 @@ export class AudioManager {
   private masterGain!: GainNode;
   private reverbSend!: GainNode;
   private enemyReverbBus!: GainNode; // shared reverb bus for per-enemy distance reverb
+  private masterConvolver!: ConvolverNode;
+  private enemyConvolver!: ConvolverNode;
   private shared: SharedBuffers = {
     searchingBuf: null, chasingBuf: null, alertBuf: null, deathGrowlBuf: null,
     idleMp3s: [], chasingMp3s: [], jumpscareMp3s: [], ambienceBufs: [], chainsBuf: null, noticeBuf: null,
@@ -470,6 +472,7 @@ export class AudioManager {
     //                master → dry (direct, keeps stereo/panning) → compressor
     const convolver = this.ctx.createConvolver();
     convolver.buffer = this.generateImpulseResponse(1.6, 5.0);
+    this.masterConvolver = convolver;
 
     const wetGain = this.ctx.createGain();
     wetGain.gain.value = 0.75;   // reverb mix level
@@ -494,6 +497,7 @@ export class AudioManager {
     // Uses a longer, more diffuse impulse for that "distant echo" effect
     const enemyConvolver = this.ctx.createConvolver();
     enemyConvolver.buffer = this.generateImpulseResponse(2.5, 3.5);
+    this.enemyConvolver = enemyConvolver;
     this.enemyReverbBus = this.ctx.createGain();
     this.enemyReverbBus.gain.value = 1.0;
     this.enemyReverbBus.connect(enemyConvolver).connect(compressor);
@@ -512,10 +516,17 @@ export class AudioManager {
 
   /**
    * Generate a synthetic impulse response for convolution reverb.
-   * @param decay   Time in seconds for the reverb tail to decay
-   * @param density Higher values = more diffuse (more random reflections)
+   * @param decay        Time in seconds for the reverb tail to decay
+   * @param density      Decay rate (higher = tighter/faster tail)
+   * @param reflections  Discrete reflection times in seconds (and their amplitudes relative to 0.4)
+   * @param earlyWindow  Duration of early-reflection boost zone (default 0.08s)
    */
-  private generateImpulseResponse(decay: number, density: number): AudioBuffer {
+  private generateImpulseResponse(
+    decay: number,
+    density: number,
+    reflections: number[] = [0.012, 0.025, 0.038, 0.055, 0.073],
+    earlyWindow = 0.08,
+  ): AudioBuffer {
     const sr = this.ctx!.sampleRate;
     const len = sr * decay;
     const buf = this.ctx!.createBuffer(2, len, sr);
@@ -524,20 +535,16 @@ export class AudioManager {
 
     for (let i = 0; i < len; i++) {
       const t = i / sr;
-      // Exponential decay envelope
       const env = Math.exp(-t * density);
-      // Diffuse white noise with some early reflection clustering
-      const earlyBoost = t < 0.08 ? 1.5 : 1.0;
+      const earlyBoost = t < earlyWindow ? 1.5 : 1.0;
       L[i] = (Math.random() * 2 - 1) * env * earlyBoost;
       R[i] = (Math.random() * 2 - 1) * env * earlyBoost;
     }
 
-    // Add a few discrete early reflections for realism
-    const reflections = [0.012, 0.025, 0.038, 0.055, 0.073];
     for (const rt of reflections) {
       const idx = Math.floor(rt * sr);
       if (idx < len) {
-        const amp = 0.4 * Math.exp(-rt * 2);
+        const amp = 0.5 * Math.exp(-rt * 2);
         L[idx] += amp * (Math.random() > 0.5 ? 1 : -1);
         R[idx] += amp * (Math.random() > 0.5 ? 1 : -1);
       }
@@ -549,6 +556,51 @@ export class AudioManager {
   /** Adjust reverb intensity per floor (called on floor change) */
   setReverbLevel(level: number) {
     if (this.reverbSend) this.reverbSend.gain.value = level;
+  }
+
+  /**
+   * Rebuild the impulse response character for the current floor.
+   * Call on every floor transition alongside setReverbLevel().
+   *   0 = Basement  — stone labyrinth, big cavernous space, very pronounced reverb
+   *   1 = House     — paper-thin walls, several medium rooms, clear but shorter reverb
+   *   2 = Village   — outdoor, buildings → sparse discrete echoes, almost no diffuse tail
+   */
+  setFloorReverb(floorIndex: number) {
+    if (!this.ctx) return;
+
+    type ReverbPreset = { decay: number; density: number; reflections: number[]; earlyWindow: number;
+                          enemyDecay: number; enemyDensity: number; enemyReflections: number[] };
+
+    const presets: ReverbPreset[] = [
+      // Floor 0: stone basement — long tail, dense early cluster, very reverberant
+      {
+        decay: 4.5, density: 1.8,
+        reflections: [0.008, 0.016, 0.028, 0.042, 0.060, 0.080, 0.105, 0.135],
+        earlyWindow: 0.12,
+        enemyDecay: 4.0, enemyDensity: 2.0,
+        enemyReflections: [0.010, 0.022, 0.038, 0.058, 0.082, 0.110],
+      },
+      // Floor 1: house — medium rooms, paper walls, moderate reverb, thinner tail
+      {
+        decay: 1.8, density: 4.5,
+        reflections: [0.014, 0.032, 0.058, 0.090, 0.125],
+        earlyWindow: 0.07,
+        enemyDecay: 1.8, enemyDensity: 4.0,
+        enemyReflections: [0.015, 0.035, 0.065, 0.100],
+      },
+      // Floor 2: village / outdoor — sparse building echoes, almost no diffuse tail
+      {
+        decay: 0.9, density: 9.0,
+        reflections: [0.075, 0.175, 0.310, 0.470],
+        earlyWindow: 0.03,
+        enemyDecay: 0.8, enemyDensity: 9.0,
+        enemyReflections: [0.080, 0.190, 0.340],
+      },
+    ];
+
+    const p = presets[floorIndex] ?? presets[1];
+    this.masterConvolver.buffer = this.generateImpulseResponse(p.decay, p.density, p.reflections, p.earlyWindow);
+    this.enemyConvolver.buffer  = this.generateImpulseResponse(p.enemyDecay, p.enemyDensity, p.enemyReflections, p.earlyWindow);
   }
 
   private async loadMp3Buffers() {

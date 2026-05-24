@@ -196,6 +196,21 @@ export class Game {
     this.minimapCanvas = document.getElementById('minimap') as HTMLCanvasElement;
     this.minimapCtx    = this.minimapCanvas.getContext('2d')!;
 
+    // Touch: hold the minimap to double its size for easier reading
+    this.minimapCanvas.addEventListener('touchstart', (e) => {
+      e.preventDefault();
+      e.stopPropagation();
+      this.minimapCanvas.style.transform = 'scale(2)';
+      this.minimapCanvas.style.transformOrigin = 'bottom right';
+      this.minimapCanvas.style.opacity = '1';
+    }, { passive: false });
+    const resetMapZoom = () => {
+      this.minimapCanvas.style.transform = '';
+      this.minimapCanvas.style.opacity = '';
+    };
+    this.minimapCanvas.addEventListener('touchend',    resetMapZoom);
+    this.minimapCanvas.addEventListener('touchcancel', resetMapZoom);;
+
     this.itemKeyEl     = document.getElementById('item-key')!;
     this.itemMapEl     = document.getElementById('item-map')!;
     this.itemCompassEl = document.getElementById('item-compass')!;
@@ -470,9 +485,10 @@ export class Game {
     const ambientScale = floorIdx === 0 ? 7.0 : 3.0;
     if (this.globalLights[0]) (this.globalLights[0] as THREE.AmbientLight).intensity = ambientScale;
 
-    // Reverb per floor: catacombs = very reverberant, house = moderate, village = open air
-    const reverbLevels = [1.2, 0.65, 0.35];
+    // Reverb wet level + impulse character per floor
+    const reverbLevels = [1.4, 0.65, 0.28];
     this.audio.setReverbLevel(reverbLevels[floorIdx] ?? 0.3);
+    this.audio.setFloorReverb(floorIdx);
 
     // Floor ambience (from SoundConfig)
     const ambCfg = soundConfig.floorAmbience[floorIdx];
