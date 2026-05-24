@@ -132,8 +132,7 @@ export class Game {
 
   constructor(container: HTMLElement) {
     this.renderer = new THREE.WebGLRenderer({ antialias: false });
-    this.renderer.setPixelRatio(window.devicePixelRatio / settings.get('pixelScale'));
-    this.renderer.setSize(window.innerWidth, window.innerHeight);
+    this.renderer.setPixelRatio(1);
     this.renderer.shadowMap.enabled = true;
     this.renderer.shadowMap.type = THREE.BasicShadowMap; // hard shadows, cheapest
     container.appendChild(this.renderer.domElement);
@@ -162,9 +161,8 @@ export class Game {
     this.torchLight.position.set(0, -0.3, -0.4);
     this.camera.add(this.torchLight);
 
-    // Post-processing
+    // Post-processing — sizes are set via applyResolution() below
     this.composer = new EffectComposer(this.renderer);
-    // RenderPass always renders the scene — SSAO is layered on top when enabled
     const renderPass = new RenderPass(this.scene, this.camera);
     this.composer.addPass(renderPass);
     this.ssaoPass = new SSAOPass(this.scene, this.camera, window.innerWidth, window.innerHeight);
@@ -176,6 +174,7 @@ export class Game {
     this.composer.addPass(this.ssaoPass);
     this.horrorPass = new ShaderPass(HorrorShader);
     this.composer.addPass(this.horrorPass);
+    this.applyResolution();
 
     // Maze
     this.maze        = new MazeGenerator();
@@ -1028,8 +1027,7 @@ if (caught && !caughtBy) {
     const s = settings;
 
     // Resolution
-    this.renderer.setPixelRatio(window.devicePixelRatio / s.get('pixelScale'));
-    this.renderer.setSize(window.innerWidth, window.innerHeight);
+    this.applyResolution();
 
     // Shadows
     const shadowsOn = s.get('shadows');
@@ -1624,11 +1622,20 @@ if (caught && !caughtBy) {
     this.start();
   }
 
+  private applyResolution() {
+    const scale   = settings.get('pixelScale');
+    const renderW = Math.round(window.innerWidth  / scale);
+    const renderH = Math.round(window.innerHeight / scale);
+    // Render at the reduced size; CSS (width/height 100%) upscales to fill the viewport
+    this.renderer.setPixelRatio(1);
+    this.renderer.setSize(renderW, renderH, false);
+    this.composer.setSize(renderW, renderH);
+    this.ssaoPass.setSize(renderW, renderH);
+  }
+
   private onResize() {
     this.camera.aspect = window.innerWidth / window.innerHeight;
     this.camera.updateProjectionMatrix();
-    this.renderer.setSize(window.innerWidth, window.innerHeight);
-    this.composer.setSize(window.innerWidth, window.innerHeight);
-    this.ssaoPass.setSize(window.innerWidth, window.innerHeight);
+    this.applyResolution();
   }
 }
