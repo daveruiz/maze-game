@@ -1,6 +1,11 @@
 const CACHE = 'dads-nightmare-v1';
 
-self.addEventListener('install', () => self.skipWaiting());
+// Don't skip waiting automatically — let the page prompt the user to update.
+// The page sends { type: 'SKIP_WAITING' } when the user taps the banner.
+self.addEventListener('message', e => {
+  if (e.data?.type === 'SKIP_WAITING') self.skipWaiting();
+});
+
 self.addEventListener('activate', e => e.waitUntil(self.clients.claim()));
 
 self.addEventListener('fetch', e => {
