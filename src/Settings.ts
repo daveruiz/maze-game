@@ -24,7 +24,7 @@ const DEFAULTS: SettingsData = {
   ambientOcclusion: true,
   vibration:        false,
   micInput:         false,
-  micReverbVolume:  0.5,
+  micReverbVolume:  0.1,
   toggleCrouch:     false,
   mouseSensitivity: 1.0,
   mobileScale:      1.0,

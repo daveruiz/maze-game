@@ -448,6 +448,7 @@ export class AudioManager {
   private enemyReverbBus!: GainNode; // shared reverb bus for per-enemy distance reverb
   private masterConvolver!: ConvolverNode;
   private enemyConvolver!: ConvolverNode;
+  private micConvolver: ConvolverNode | null = null; // mic's own convolver (same IR as master)
   private shared: SharedBuffers = {
     searchingBuf: null, chasingBuf: null, alertBuf: null, deathGrowlBuf: null,
     idleMp3s: [], chasingMp3s: [], jumpscareMp3s: [], ambienceBufs: [], chainsBuf: null, noticeBuf: null,
@@ -469,7 +470,7 @@ export class AudioManager {
   private pendingAmbiencePositions: { x: number; y: number; z: number }[] = [];
 
   init() {
-    this.ctx = new AudioContext();
+    this.ctx = new AudioContext({ latencyHint: 0, sampleRate: 48000 });
 
     // Master volume (doubled from 0.2)
     this.masterGain = this.ctx.createGain();
@@ -485,39 +486,29 @@ export class AudioManager {
     compressor.release.value = 0.25;   // 250ms — smooth release
     compressor.connect(this.ctx.destination);
 
-    // Global reverb: master → mono downmix → convolver → wet gain → compressor
+    // Global reverb: master → [buildReverbChain] → compressor
     //                master → dry (direct, keeps stereo/panning) → compressor
-    const convolver = this.ctx.createConvolver();
-    convolver.buffer = this.generateImpulseResponse(1.6, 5.0);
-    this.masterConvolver = convolver;
-
-    const wetGain = this.ctx.createGain();
-    wetGain.gain.value = 0.75;   // reverb mix level
-
-    // Mono downmix before convolver — reverb is a diffuse room effect,
-    // it shouldn't carry stereo/HRTF positioning (critical for headphones)
-    const monoGain = this.ctx.createGain();
-    monoGain.channelCount = 1;
-    monoGain.channelCountMode = 'explicit';
+    const defaultIR = this.generateImpulseResponse(1.6, 5.0);
+    const masterReverb = this.buildReverbChain(defaultIR, 0.75);
+    this.masterConvolver = masterReverb.convolver;
+    this.reverbSend = masterReverb.wetGain;
 
     const dryGain = this.ctx.createGain();
     dryGain.gain.value = 1.0;
 
     this.masterGain.connect(dryGain).connect(compressor);
-    // Reverb path: master → mono downmix → convolver → wet → compressor
-    this.masterGain.connect(monoGain).connect(convolver).connect(wetGain).connect(compressor);
+    this.masterGain.connect(masterReverb.input);
+    masterReverb.output.connect(compressor);
 
-    // Keep reference so we can adjust reverb per floor
-    this.reverbSend = wetGain;
-
-    // Per-enemy distance reverb bus: enemy wet sends → convolver → destination
+    // Per-enemy distance reverb bus: enemy wet sends → convolver → compressor
     // Uses a longer, more diffuse impulse for that "distant echo" effect
-    const enemyConvolver = this.ctx.createConvolver();
-    enemyConvolver.buffer = this.generateImpulseResponse(2.5, 3.5);
-    this.enemyConvolver = enemyConvolver;
+    const enemyIR = this.generateImpulseResponse(2.5, 3.5);
+    const enemyReverb = this.buildReverbChain(enemyIR, 1.0, false); // preserve HRTF positioning
+    this.enemyConvolver = enemyReverb.convolver;
     this.enemyReverbBus = this.ctx.createGain();
     this.enemyReverbBus.gain.value = 1.0;
-    this.enemyReverbBus.connect(enemyConvolver).connect(compressor);
+    this.enemyReverbBus.connect(enemyReverb.input);
+    enemyReverb.output.connect(compressor);
 
     // Generate procedural buffers
     this.shared.searchingBuf = this.makeSearchingBuffer();
@@ -533,10 +524,8 @@ export class AudioManager {
 
   /**
    * Generate a synthetic impulse response for convolution reverb.
-   * @param decay        Time in seconds for the reverb tail to decay
-   * @param density      Decay rate (higher = tighter/faster tail)
-   * @param reflections  Discrete reflection times in seconds (and their amplitudes relative to 0.4)
-   * @param earlyWindow  Duration of early-reflection boost zone (default 0.08s)
+   * L and R channels use independent random noise + offset reflections
+   * so the reverb output has natural stereo width.
    */
   private generateImpulseResponse(
     decay: number,
@@ -547,11 +536,12 @@ export class AudioManager {
     reflAmp    = 0.5,   // base amplitude for discrete reflection taps
   ): AudioBuffer {
     const sr = this.ctx!.sampleRate;
-    const len = sr * decay;
+    const len = Math.floor(sr * decay);
     const buf = this.ctx!.createBuffer(2, len, sr);
     const L = buf.getChannelData(0);
     const R = buf.getChannelData(1);
 
+    // Independent noise per channel → natural stereo decorrelation
     for (let i = 0; i < len; i++) {
       const t = i / sr;
       const env = Math.exp(-t * density);
@@ -560,16 +550,54 @@ export class AudioManager {
       R[i] = (Math.random() * 2 - 1) * env * earlyBoost * noiseLevel;
     }
 
+    // Discrete reflections: slightly offset L vs R timing for stereo spread
+    // Each reflection arrives 0.5–2ms earlier/later per channel, simulating
+    // echoes bouncing off walls at different angles
     for (const rt of reflections) {
-      const idx = Math.floor(rt * sr);
-      if (idx < len) {
-        const amp = reflAmp * Math.exp(-rt * 1.2); // gentler distance rolloff
-        L[idx] += amp * (Math.random() > 0.5 ? 1 : -1);
-        R[idx] += amp * (Math.random() > 0.5 ? 1 : -1);
-      }
+      const amp = reflAmp * Math.exp(-rt * 1.2);
+      const jitterL = (Math.random() - 0.5) * 0.002; // ±1ms
+      const jitterR = (Math.random() - 0.5) * 0.002;
+      const idxL = Math.floor((rt + jitterL) * sr);
+      const idxR = Math.floor((rt + jitterR) * sr);
+      if (idxL >= 0 && idxL < len) L[idxL] += amp * (Math.random() > 0.5 ? 1 : -1);
+      if (idxR >= 0 && idxR < len) R[idxR] += amp * (Math.random() > 0.5 ? 1 : -1);
     }
 
     return buf;
+  }
+
+  /**
+   * Build a reverb chain: input → monoDownmix → convolver → wetGain → output.
+   * Returns { input, output, convolver, wetGain } so the caller can wire
+   * source → input and output → destination, and adjust wetGain.
+   */
+  /**
+   * Build a reverb chain: input → [optional monoDownmix] → convolver → wetGain → output.
+   * @param mono  true = downmix to mono before convolver (diffuse room reverb, no positioning).
+   *              false = preserve stereo/HRTF positioning through the reverb (spatialized enemies).
+   */
+  private buildReverbChain(ir: AudioBuffer, wetLevel: number, mono = true) {
+    const ctx = this.ctx!;
+
+    let head: AudioNode;
+    if (mono) {
+      const monoGain = ctx.createGain();
+      monoGain.channelCount = 1;
+      monoGain.channelCountMode = 'explicit';
+      head = monoGain;
+    } else {
+      head = ctx.createGain();
+    }
+
+    const convolver = ctx.createConvolver();
+    convolver.buffer = ir;
+
+    const wetGain = ctx.createGain();
+    wetGain.gain.value = wetLevel;
+
+    head.connect(convolver).connect(wetGain);
+
+    return { input: head, output: wetGain, convolver, wetGain };
   }
 
   /** Adjust reverb intensity per floor (called on floor change) */
@@ -601,28 +629,33 @@ export class AudioManager {
         enemyDecay: 4.0, enemyDensity: 2.0,
         enemyReflections: [0.010, 0.022, 0.038, 0.058, 0.082, 0.110],
       },
-      // Floor 1: house — medium rooms, paper walls, moderate reverb, thinner tail
+      // Floor 1: house — small rooms, thin walls, short subtle reverb
       {
-        decay: 1.8, density: 4.5,
-        reflections: [0.014, 0.032, 0.058, 0.090, 0.125],
-        earlyWindow: 0.07,
-        enemyDecay: 1.8, enemyDensity: 4.0,
-        enemyReflections: [0.015, 0.035, 0.065, 0.100],
+        decay: 0.8, density: 8.0,
+        reflections: [0.010, 0.024, 0.042, 0.065],
+        earlyWindow: 0.04, noiseLevel: 0.6, reflAmp: 0.25,
+        enemyDecay: 0.7, enemyDensity: 9.0,
+        enemyReflections: [0.012, 0.028, 0.050],
+        enemyNoiseLevel: 0.5, enemyReflAmp: 0.20,
       },
-      // Floor 2: village / outdoor — discrete building echoes, near-zero diffuse bed
+      // Floor 2: village / outdoor — soft scattered echoes off buildings, short tail
+      // Open air absorbs energy quickly; reflections are quieter and irregularly spaced
       {
-        decay: 1.2, density: 18.0,
-        reflections: [0.065, 0.155, 0.270, 0.400, 0.550, 0.720],
-        earlyWindow: 0.02, noiseLevel: 0.04, reflAmp: 0.85,
-        enemyDecay: 1.0, enemyDensity: 18.0,
-        enemyReflections: [0.070, 0.165, 0.285, 0.420, 0.580],
-        enemyNoiseLevel: 0.04, enemyReflAmp: 0.85,
+        decay: 0.9, density: 6.0,
+        reflections: [0.045, 0.110, 0.200, 0.330, 0.480],
+        earlyWindow: 0.03, noiseLevel: 0.15, reflAmp: 0.35,
+        enemyDecay: 0.8, enemyDensity: 7.0,
+        enemyReflections: [0.050, 0.125, 0.220, 0.360],
+        enemyNoiseLevel: 0.12, enemyReflAmp: 0.30,
       },
     ];
 
     const p = presets[floorIndex] ?? presets[1];
-    this.masterConvolver.buffer = this.generateImpulseResponse(p.decay, p.density, p.reflections, p.earlyWindow, p.noiseLevel, p.reflAmp);
+    const masterIR = this.generateImpulseResponse(p.decay, p.density, p.reflections, p.earlyWindow, p.noiseLevel, p.reflAmp);
+    this.masterConvolver.buffer = masterIR;
     this.enemyConvolver.buffer  = this.generateImpulseResponse(p.enemyDecay, p.enemyDensity, p.enemyReflections, p.earlyWindow, p.enemyNoiseLevel, p.enemyReflAmp);
+    // Keep mic reverb in sync with the floor's acoustic character
+    if (this.micConvolver) this.micConvolver.buffer = masterIR;
   }
 
   private async loadMp3Buffers() {
@@ -796,13 +829,24 @@ export class AudioManager {
     this.micAnalyserBuf = new Uint8Array(this.micAnalyser.fftSize);
     this.micSource.connect(this.micAnalyser);
 
-    // Route mic through the game's master reverb bus (same convolver + floor character)
-    this.micReverbWetGain = this.ctx.createGain();
-    this.micReverbWetGain.gain.value = reverbVolume * 1.8;
+    // Mic reverb: wet-only path (no dry — player shouldn't hear their own voice)
+    // Uses its own convolver with the SAME impulse response as the master,
+    // so mic reverb matches the current floor's acoustic character.
+    const ir = this.masterConvolver.buffer!;
+    const micReverb = this.buildReverbChain(ir, reverbVolume * 1.8);
+    this.micConvolver = micReverb.convolver;
+    this.micReverbWetGain = micReverb.wetGain;
 
-    // Mic → wet gain → master gain (which feeds into the shared reverb chain)
-    this.micSource.connect(this.micReverbWetGain)
-      .connect(this.masterGain);
+    // Compressor to tame mic peaks before hitting destination
+    const micComp = this.ctx.createDynamicsCompressor();
+    micComp.threshold.value = -18;
+    micComp.knee.value = 8;
+    micComp.ratio.value = 4;
+    micComp.connect(this.ctx.destination);
+
+    // Mic → reverb chain (wet only) → compressor → destination
+    this.micSource.connect(micReverb.input);
+    micReverb.output.connect(micComp);
   }
 
   setMicReverbVolume(volume: number) {
@@ -816,6 +860,7 @@ export class AudioManager {
     this.micSource = null;
     this.micAnalyser = null;
     this.micReverbWetGain = null;
+    this.micConvolver = null;
     this.micStream?.getTracks().forEach(t => t.stop());
     this.micStream = null;
   }

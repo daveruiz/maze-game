@@ -76,8 +76,22 @@ function stopMenuDrone() {
   setTimeout(() => { menuCtx?.close(); menuCtx = null; menuDroneGain = null; }, 400);
 }
 
+// Try to start the drone immediately — works if the browser already grants
+// autoplay (e.g. user has interacted with the site before).  If the
+// AudioContext starts suspended, fall back to the first pointerdown.
 const menuDroneHandler = () => startMenuDrone();
-document.addEventListener('pointerdown', menuDroneHandler, { once: true });
+try {
+  const probe = new AudioContext();
+  if (probe.state === 'running') {
+    probe.close();
+    startMenuDrone();
+  } else {
+    probe.close();
+    document.addEventListener('pointerdown', menuDroneHandler, { once: true });
+  }
+} catch {
+  document.addEventListener('pointerdown', menuDroneHandler, { once: true });
+}
 
 // ── Input mode — install early so first event is caught ─────────────────
 inputMode.install();

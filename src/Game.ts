@@ -494,7 +494,7 @@ export class Game {
     if (this.globalLights[0]) (this.globalLights[0] as THREE.AmbientLight).intensity = ambientScale;
 
     // Reverb wet level + impulse character per floor
-    const reverbLevels = [1.4, 0.65, 0.45];
+    const reverbLevels = [1.4, 0.30, 0.20];
     this.audio.setReverbLevel(reverbLevels[floorIdx] ?? 0.3);
     this.audio.setFloorReverb(floorIdx);
 
@@ -1077,7 +1077,15 @@ if (caught && !caughtBy) {
 
   private async setupMicrophone() {
     try {
-      const stream = await navigator.mediaDevices.getUserMedia({ audio: true, video: false });
+      const stream = await navigator.mediaDevices.getUserMedia({
+        audio: {
+          echoCancellation: false,          // skip processing — reduces latency
+          noiseSuppression: false,
+          autoGainControl: false,
+          latency: { ideal: 0 },            // request lowest possible buffer
+        } as MediaTrackConstraints,
+        video: false,
+      });
       this.audio.connectMicrophone(stream, this.micReverbVolume);
     } catch {
       // Permission denied or mic unavailable — silently disable
