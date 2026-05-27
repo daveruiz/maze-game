@@ -365,10 +365,32 @@
     #overlay .controls-list {
       color: #888;
       font-size: 1.6rem;
-      margin-bottom: 28px;
+      margin-bottom: 16px;
       text-align: center;
       line-height: 1.8;
     }
+    #headphone-hint {
+      color: #4a4a4a;
+      font-size: 1.2rem;
+      letter-spacing: 2px;
+      margin-bottom: 22px;
+    }
+    #update-banner {
+      position: fixed;
+      bottom: 0; left: 0; right: 0;
+      background: rgba(10,8,14,0.97);
+      border-top: 1px solid rgba(232,197,109,0.4);
+      color: #e8c56d;
+      font-family: "Barriecito", system-ui;
+      font-size: 1.3rem;
+      letter-spacing: 2px;
+      text-align: center;
+      padding: 14px 20px;
+      z-index: 200;
+      display: none;
+      cursor: pointer;
+    }
+    #update-banner:hover { background: rgba(20,16,28,0.98); }
     #start-btn {
       background: #e8c56d;
       color: #000;
@@ -546,6 +568,7 @@
         <div id="gp-controls" class="controls-list" style="display:none">
           LEFT STICK — Move &nbsp;|&nbsp; RIGHT STICK — Look &nbsp;|&nbsp; A — Jump &nbsp;|&nbsp; B — Crouch &nbsp;|&nbsp; X — Flashlight &nbsp;|&nbsp; L3 — Sprint
         </div>
+        <div id="headphone-hint">🎧 &nbsp;Best experienced with headphones</div>
         <div class="overlay-btn-row">
           <button id="start-btn">ENTER</button>
           <button id="options-btn">⚙</button>
@@ -886,12 +909,42 @@
   })();
   </script>
 
+  <div id="update-banner">New version available — tap to update ↺</div>
+
   <script type="module" src="/src/main.ts"></script>
   <script>
     if ('serviceWorker' in navigator) {
-      window.addEventListener('load', () =>
-        navigator.serviceWorker.register('./sw.js').catch(() => {})
-      );
+      window.addEventListener('load', async () => {
+        try {
+          const reg = await navigator.serviceWorker.register('./sw.js');
+
+          // Proactively check for a new SW on every load
+          reg.update();
+
+          const banner = document.getElementById('update-banner');
+          const showBanner = () => { if (banner) banner.style.display = 'block'; };
+
+          // New SW waiting (page was already open when SW updated)
+          if (reg.waiting) showBanner();
+
+          reg.addEventListener('updatefound', () => {
+            reg.installing?.addEventListener('statechange', function () {
+              if (this.state === 'installed' && navigator.serviceWorker.controller) showBanner();
+            });
+          });
+
+          // SW took control (skipWaiting fired) — reload to use new assets
+          navigator.serviceWorker.addEventListener('controllerchange', () => {
+            window.location.reload();
+          });
+
+          if (banner) banner.addEventListener('click', () => {
+            reg.waiting?.postMessage({ type: 'SKIP_WAITING' });
+            // If no waiting worker (controllerchange already fired), just reload
+            if (!reg.waiting) window.location.reload();
+          });
+        } catch (_) {}
+      });
     }
   </script>
 </body>

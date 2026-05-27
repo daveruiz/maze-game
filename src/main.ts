@@ -94,6 +94,12 @@ inputMode.onChange((mode) => {
 });
 
 startBtn.addEventListener('click', () => {
+  // Request fullscreen on mobile — must be synchronous inside the user gesture
+  if (inputMode.isTouch) {
+    const el = document.documentElement as any;
+    (el.requestFullscreen || el.webkitRequestFullscreen || el.msRequestFullscreen)?.call(el).catch(() => {});
+  }
+
   stopMenuDrone();
 
   blackout.style.transition = 'none';
