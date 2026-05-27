@@ -1007,7 +1007,12 @@ export class Enemy {
 
     if (this.path.length > 0) {
       const next = this.path[0];
-      const huntSpeed = BASE_SEARCH_SPEED * Enemy.HUNT_SPEED_MULT;
+      // Speed scales with distance to player: fast when far, normal when close
+      const distToPlayer = this.pos.distanceTo(this.playerHint) / CELL_SIZE; // in cells
+      const FAR_CELLS = 20;  // max speed at this distance
+      const NEAR_CELLS = 4;  // normal speed at this distance
+      const distFrac = Math.max(0, Math.min(1, (distToPlayer - NEAR_CELLS) / (FAR_CELLS - NEAR_CELLS)));
+      const huntSpeed = BASE_SEARCH_SPEED * (1 + (Enemy.HUNT_SPEED_MULT - 1) * distFrac);
       const speed = huntSpeed + (BASE_CHASE_SPEED - huntSpeed) * this.suspicion;
       const d = this.moveToward(next, speed * speedMult * dt);
       if (d < 0.4) this.path.shift();
@@ -1022,9 +1027,9 @@ export class Enemy {
     const cells = this.reachableCells.filter(c => !c.hasObstacle);
     if (cells.length === 0) return this.playerHint.clone();
 
-    // Target cells 3–8 BFS steps from the player
-    const HUNT_MIN = 3;
-    const HUNT_MAX = 8;
+    // Target cells 5–10 BFS steps from the player
+    const HUNT_MIN = 5;
+    const HUNT_MAX = 10;
     const MAX_ATTEMPTS = 5;
 
     // Build a pool of good candidates in the 3–8 range, then pick randomly
@@ -1199,6 +1204,8 @@ export class Enemy {
     }
   }
 
+  private static readonly ENEMY_RADIUS = 0.8; // collision radius for enemy-enemy pushout
+
   private moveToward(target: THREE.Vector3, maxDist: number): number {
     const diff = target.clone().sub(this.pos);
     diff.y = 0;
@@ -1214,7 +1221,31 @@ export class Enemy {
       this.enforceWalls();
       this.enforceWalls();
     }
+    // Push apart from siblings on the same floor
+    this.enforceSiblingCollision();
     return dist;
+  }
+
+  /** Soft push enemies apart so they don't overlap */
+  private enforceSiblingCollision() {
+    const R = Enemy.ENEMY_RADIUS;
+    const minDist = R * 2;
+    for (const sib of this.siblings) {
+      if (sib === this || sib.homeFloor !== this.homeFloor) continue;
+      const dx = this.pos.x - sib.pos.x;
+      const dz = this.pos.z - sib.pos.z;
+      const d = Math.sqrt(dx * dx + dz * dz);
+      if (d < minDist && d > 0.001) {
+        // Push this enemy away by half the overlap
+        const overlap = (minDist - d) * 0.5;
+        const nx = dx / d;
+        const nz = dz / d;
+        this.pos.x += nx * overlap;
+        this.pos.z += nz * overlap;
+      }
+    }
+    // Re-enforce walls after pushout
+    this.enforceWalls();
   }
 
   /** Push enemy position out of walls — mirrors Player.enforceWallMargin() */
@@ -1533,6 +1564,8 @@ export class Enemy {
 
   getPosition(): THREE.Vector3 { return this.pos; }
   getSearchTarget(): THREE.Vector3 | null { return this.searchTarget; }
+  getFloorIndex(): number { return this.homeFloor; }
+  getChannelId(): number { return this.channelId; }
 
   /** Get the world-space position of the Head bone (falls back to estimated position). */
   getHeadPosition(): THREE.Vector3 {

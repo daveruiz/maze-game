@@ -69,12 +69,15 @@ function startMenuDrone() {
 function stopMenuDrone() {
   if (!menuDroneGain || !menuCtx) return;
   const now = menuCtx.currentTime;
+  // Cancel any pending fade-in ramp, then fade out quickly
+  menuDroneGain.gain.cancelScheduledValues(0);
   menuDroneGain.gain.setValueAtTime(menuDroneGain.gain.value, now);
-  menuDroneGain.gain.linearRampToValueAtTime(0, now + 0.5);
-  setTimeout(() => { menuCtx?.close(); menuCtx = null; menuDroneGain = null; }, 600);
+  menuDroneGain.gain.linearRampToValueAtTime(0, now + 0.3);
+  setTimeout(() => { menuCtx?.close(); menuCtx = null; menuDroneGain = null; }, 400);
 }
 
-document.addEventListener('pointerdown', startMenuDrone, { once: true });
+const menuDroneHandler = () => startMenuDrone();
+document.addEventListener('pointerdown', menuDroneHandler, { once: true });
 
 // ── Input mode — install early so first event is caught ─────────────────
 inputMode.install();
@@ -100,6 +103,7 @@ startBtn.addEventListener('click', () => {
     (el.requestFullscreen || el.webkitRequestFullscreen || el.msRequestFullscreen)?.call(el).catch(() => {});
   }
 
+  document.removeEventListener('pointerdown', menuDroneHandler);
   stopMenuDrone();
 
   blackout.style.transition = 'none';

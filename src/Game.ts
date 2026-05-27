@@ -351,6 +351,15 @@ export class Game {
     for (const enemy of this.enemies) {
       enemy.setSiblings(this.enemies);
     }
+    // Set per-floor enemy count for vocalization interval scaling
+    for (let fi = 0; fi < NUM_FLOORS; fi++) {
+      const floorCount = ENEMIES_PER_FLOOR[fi] ?? 1;
+      for (const enemy of this.enemies) {
+        if (enemy.homeFloor === fi) {
+          this.audio.setChannelEnemyCount(enemy.getChannelId(), floorCount);
+        }
+      }
+    }
 
     this.flashBattery  = 100;
     this.flashlightOn  = true;
@@ -840,10 +849,11 @@ if (caught && !caughtBy) {
     this.deathEnemy = enemy;
     // Trigger the enemy's attack animation and face the player
     enemy.playCaughtAnimation();
-    // Reset crouch so death camera isn't low — also snap camera Y back up
+    // Reset crouch and snap camera to standing height (handles mid-jump / mid-crouch)
     this.player.resetCrouch();
+    this.player.snapToGround();
     this.camera.position.copy(this.player.getPosition());
-    // Capture current camera state as starting point (after crouch reset)
+    // Capture current camera state as starting point (at standing height)
     this.deathYaw = this.camera.rotation.y;
     this.deathPitch = this.camera.rotation.x;
     this.deathStartPos.copy(this.camera.position);

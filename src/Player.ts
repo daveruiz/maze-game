@@ -155,6 +155,20 @@ export class Player {
     this.currentCrouchDip = 0;
   }
 
+  /** Snap player Y to standing ground level (cancel jump / fall) */
+  snapToGround() {
+    const cellPos = this.maze.worldToCell(this.pos.x, this.pos.z, this.floorIndex);
+    const floor   = this.maze.floors[this.floorIndex];
+    const cell    = floor?.cells[cellPos.z]?.[cellPos.x];
+    const baseY   = this.floorIndex * (WALL_HEIGHT + 1.0);
+    const groundY = baseY + (cell?.hasObstacle ? OBSTACLE_HEIGHT : 0) + PLAYER_HEIGHT;
+    this.pos.y = groundY;
+    this.verticalVelocity = 0;
+  }
+
+  /** Toggle crouch state (for gamepad / external callers in toggle-crouch mode) */
+  triggerCrouchToggle() { this.crouchToggled = !this.crouchToggled; }
+
   /** Mobile: set a virtual key state */
   setKey(code: string, pressed: boolean) { this.keys[code] = pressed; }
 

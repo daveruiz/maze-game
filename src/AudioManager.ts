@@ -47,6 +47,10 @@ class EnemyChannel {
   private oneShotPriority: number = 0;
   private nextTriggerTime: number = 0;
   private currentState: string = '';
+  private lastIdleIdx = -1;      // avoid same idle sound twice in a row
+  private lastChasingIdx = -1;   // avoid same chasing sound twice in a row
+  /** Number of active enemy channels — set by AudioManager, scales vocalization intervals */
+  enemyCount = 1;
 
   // Smoothed occlusion values (avoid clicks from sudden changes)
   private currentDry = 1.0;
@@ -173,7 +177,6 @@ class EnemyChannel {
       return;
     }
 
-    const prev = this.currentState;
     this.currentState = state;
 
     switch (state) {
@@ -191,7 +194,7 @@ class EnemyChannel {
       case 'chasing':
         this.setLoop(shared.chasingBuf, 0.6);
         if (this.oneShotPriority < 3) {
-          this.playRandomOneShot(shared.chasingMp3s, 0.7, 2);
+          this.playRandomOneShot(shared.chasingMp3s, 0.7, 2, true);
         }
         this.scheduleNext(CHASING_MIN_INTERVAL, CHASING_MAX_INTERVAL);
         this.startChainsLoop2();
@@ -335,15 +338,22 @@ class EnemyChannel {
     this.oneShot = src;
     this.oneShotPriority = 2;
     src.onended = () => { if (this.oneShot === src) { this.oneShot = null; this.oneShotPriority = 0; } };
-    // Push idle sounds back — enemy is alert/searching, not casually vocalising
-    this.scheduleNext(IDLE_MAX_INTERVAL * 1.5, IDLE_MAX_INTERVAL * 2);
+    // Push idle sounds back briefly — enemy just vocalised a notice
+    this.scheduleNext(IDLE_MIN_INTERVAL, IDLE_MAX_INTERVAL);
   }
 
-  private playRandomOneShot(pool: AudioBuffer[], volume: number, priority: number) {
+  private playRandomOneShot(pool: AudioBuffer[], volume: number, priority: number, isChasing: boolean) {
     if (pool.length === 0) return;
     if (this.oneShot && this.oneShotPriority >= priority) return;
     this.stopOneShot();
-    const buf = pool[Math.floor(Math.random() * pool.length)];
+    // Pick random index, avoiding the last one played (if pool has > 1 entry)
+    const lastIdx = isChasing ? this.lastChasingIdx : this.lastIdleIdx;
+    let idx = Math.floor(Math.random() * pool.length);
+    if (pool.length > 1 && idx === lastIdx) {
+      idx = (idx + 1 + Math.floor(Math.random() * (pool.length - 1))) % pool.length;
+    }
+    if (isChasing) this.lastChasingIdx = idx; else this.lastIdleIdx = idx;
+    const buf = pool[idx];
     const src = this.ctx.createBufferSource();
     src.buffer = buf;
     src.playbackRate.value = PLAYBACK_RATE;
@@ -359,18 +369,25 @@ class EnemyChannel {
   }
 
   private scheduleNext(min: number, max: number) {
-    this.nextTriggerTime = this.ctx.currentTime + min + Math.random() * (max - min);
+    // Scale intervals by enemy count: each enemy triggers 1/N as often,
+    // keeping the total global vocalization rate roughly constant
+    const scale = Math.max(1, this.enemyCount);
+    this.nextTriggerTime = this.ctx.currentTime + (min + Math.random() * (max - min)) * scale;
   }
 
   private tickRandom(shared: SharedBuffers) {
     if (this.nextTriggerTime <= 0 || this.ctx.currentTime < this.nextTriggerTime) return;
-    if (this.oneShot && this.oneShotPriority >= 3) return;
+    if (this.oneShot && this.oneShotPriority >= 3) return; // don't interrupt alerts
+
+    // Force-clear any lingering one-shot (e.g. notice whose onended didn't fire)
+    // so the scheduled vocalization can always play
+    this.stopOneShot();
 
     if (this.currentState === 'searching') {
-      this.playRandomOneShot(shared.idleMp3s, 0.5, 1);
+      this.playRandomOneShot(shared.idleMp3s, 0.5, 1, false);
       this.scheduleNext(IDLE_MIN_INTERVAL, IDLE_MAX_INTERVAL);
     } else if (this.currentState === 'chasing') {
-      this.playRandomOneShot(shared.chasingMp3s, 0.7, 2);
+      this.playRandomOneShot(shared.chasingMp3s, 0.7, 2, true);
       this.scheduleNext(CHASING_MIN_INTERVAL, CHASING_MAX_INTERVAL);
     }
   }
@@ -677,6 +694,12 @@ export class AudioManager {
     return id;
   }
 
+  /** Set the number of co-floor enemies for vocalization interval scaling */
+  setChannelEnemyCount(id: number, count: number) {
+    const ch = this.channels.get(id);
+    if (ch) ch.enemyCount = count;
+  }
+
   /** Update position of an enemy channel */
   setChannelPosition(id: number, x: number, y: number, z: number) {
     this.channels.get(id)?.setPosition(x, y, z);
@@ -773,28 +796,13 @@ export class AudioManager {
     this.micAnalyserBuf = new Uint8Array(this.micAnalyser.fftSize);
     this.micSource.connect(this.micAnalyser);
 
-    // Reverb feedback chain — always wired so volume can be adjusted live
-    // Mono downmix before convolver (same reason as master reverb)
-    const monoGain = this.ctx.createGain();
-    monoGain.channelCount = 1;
-    monoGain.channelCountMode = 'explicit';
-
-    const convolver = this.ctx.createConvolver();
-    convolver.buffer = this.generateImpulseResponse(1.6, 5.0);
-
+    // Route mic through the game's master reverb bus (same convolver + floor character)
     this.micReverbWetGain = this.ctx.createGain();
     this.micReverbWetGain.gain.value = reverbVolume * 1.8;
 
-    const compressor = this.ctx.createDynamicsCompressor();
-    compressor.threshold.value = -18;
-    compressor.knee.value = 8;
-    compressor.ratio.value = 4;
-
-    this.micSource.connect(monoGain)
-      .connect(convolver)
-      .connect(this.micReverbWetGain)
-      .connect(compressor)
-      .connect(this.ctx.destination);
+    // Mic → wet gain → master gain (which feeds into the shared reverb chain)
+    this.micSource.connect(this.micReverbWetGain)
+      .connect(this.masterGain);
   }
 
   setMicReverbVolume(volume: number) {

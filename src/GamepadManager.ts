@@ -1,5 +1,6 @@
 import { Player } from './Player';
 import { inputMode } from './InputMode';
+import { settings } from './Settings';
 
 // Standard gamepad button / axis mapping (Xinput / PS layout)
 const AXIS_LX = 0;
@@ -21,7 +22,9 @@ export class GamepadManager {
   private toggleFlashlight: () => void;
 
   private sprintLatched = false;
+  private crouchLatched = false;
   private prevL3 = false;
+  private prevB  = false;
   private prevA  = false;
   private prevX  = false;
 
@@ -82,8 +85,15 @@ export class GamepadManager {
     if (this.sprintLatched && !moving) this.sprintLatched = false;
     this.player.setKey('ShiftLeft', this.sprintLatched && moving);
 
-    // ── Crouch (B held) ────────────────────────────────────────────────
-    this.player.setKey('KeyC', b);
+    // ── Crouch (B — toggle or hold depending on setting) ───────────────
+    if (settings.get('toggleCrouch')) {
+      // Edge-triggered: toggle Player's internal crouchToggled flag
+      if (b && !this.prevB) this.player.triggerCrouchToggle();
+      this.prevB = b;
+    } else {
+      this.prevB = b;
+      this.player.setKey('KeyC', b);
+    }
 
     // ── Look (right stick) ─────────────────────────────────────────────
     if (Math.abs(rx) > 0.01 || Math.abs(ry) > 0.01) {
@@ -104,6 +114,7 @@ export class GamepadManager {
 
   private clearKeys() {
     this.sprintLatched = false;
+    this.crouchLatched = false;
     if (this.player) {
       for (const k of ['KeyW', 'KeyS', 'KeyA', 'KeyD', 'ShiftLeft', 'KeyC']) {
         this.player.setKey(k, false);
