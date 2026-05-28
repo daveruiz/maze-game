@@ -1,10 +1,10 @@
-# Maze Game
+# Dad's Nightmare
 
 A 3D first-person horror maze game built with Three.js and TypeScript — made just for fun!
 
 ## Play
 
-https://daveruiz.github.io/maze-game/
+https://daveruiz.github.io/game-dads-nightmare/
 
 ## The Story
 
@@ -40,20 +40,21 @@ This is a personal project made for fun and learning. Navigate through three inc
 
 ### Features
 
-- First-person 3D navigation with flashlight mechanics
-- Animated 3D enemies (GLB models with skeletal animation)
-- Speed-zone locomotion system with crossfade transitions
+- First-person 3D navigation with flashlight mechanics (battery drain/recharge)
+- Animated 3D enemies (GLB models with skeletal animation and crossfade transitions)
 - Suspicion-driven AI: idle → investigate → chase → hunt
-- Line-of-sight detection with direct chase movement
-- Hunt mode: enemies converge on the player after key collection
-- 3D positional audio for enemy vocalizations and chains
+- Hunt mode: enemies converge on the player after key collection, speed scales with distance
+- Enemy-enemy collision so they don't stack on top of each other
+- HRTF 3D positional audio for enemy vocalizations, chains, and footsteps
+- Floor-specific reverb (cavernous basement, muted house, soft outdoor echoes)
+- Microphone input with wet-only reverb feedback (hear your voice echo in the maze)
 - Hard shadows from flashlight and lanterns
-- Cinematic death sequence with hit flinch and VHS overlay
-- Flashlight battery drain/recharge system
-- Post-processing effects (film grain, vignette, posterization)
+- Cinematic death sequence with hit flinch, camera fall, and VHS overlay
+- Post-processing effects (film grain, vignette, posterization, SSAO)
 - Minimap with enemy tracking
-- Jumpable obstacles
-- Gamepad and touch controls
+- Jumpable obstacles, crouching (toggle or hold)
+- Gamepad, keyboard+mouse, and touch controls
+- Options menu: mouse sensitivity, toggle crouch, resolution scaling, and more
 
 ### Controls
 
@@ -62,25 +63,28 @@ This is a personal project made for fun and learning. Navigate through three inc
 - **Mouse** — Look around
 - **Shift** — Sprint
 - **Space** — Jump
+- **C / Ctrl** — Crouch (toggle or hold, configurable)
 - **F** — Toggle flashlight
 
 **Gamepad**
 - **Left stick** — Move (L3 press to sprint)
 - **Right stick** — Look around
 - **A / Cross** — Jump
+- **B / Circle** — Crouch
 - **X / Square** — Toggle flashlight
+- **Start** — Options menu
 
 **Touch** (auto-detected)
 - **Left side** — Virtual joystick (push to edge to sprint)
 - **Right side** — Drag to look around
-- **Buttons** — Jump & Flashlight
+- **Buttons** — Jump, Crouch & Flashlight
 
 ## Tech Stack
 
-- Three.js
+- Three.js (rendering, shadows, post-processing)
 - TypeScript
 - Vite
-- Web Audio API (procedural + MP3 positional audio)
+- Web Audio API (HRTF spatial audio, procedural sounds, floor-specific convolution reverb)
 
 ## Build
 

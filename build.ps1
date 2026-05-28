@@ -3,7 +3,7 @@ param([switch]$Watch)
 $projectPath = $PSScriptRoot
 $wslPath = $projectPath -replace "C:\\", "/mnt/c/" -replace "\\", "/"
 
-Write-Host "Building maze-game..." -ForegroundColor Cyan
+Write-Host "Building Dad's Nightmare..." -ForegroundColor Cyan
 
 wsl bash -c @"
 export NVM_DIR=~/.nvm && source ~/.nvm/nvm.sh
